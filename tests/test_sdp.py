@@ -1,8 +1,6 @@
 """Tests for aiosipua.sdp."""
 
-import pytest
-
-from aiosipua.sdp import SdpMessage, build_sdp, negotiate_sdp, parse_sdp
+from aiosipua.sdp import SdpMessage, parse_sdp, serialize_sdp
 
 SIMPLE_SDP = (
     "v=0\r\n"
@@ -166,19 +164,19 @@ class TestMultiMedia:
         assert sdp.media[0].direction == "sendrecv"
 
 
-class TestBuildSdp:
-    def test_build_simple(self) -> None:
+class TestSerializeSdp:
+    def test_serialize_simple(self) -> None:
         sdp = parse_sdp(SIMPLE_SDP)
-        built = build_sdp(sdp)
+        built = serialize_sdp(sdp)
         assert built.startswith("v=0\r\n")
         assert "o=- 12345 67890 IN IP4 192.168.1.100\r\n" in built
         assert "s=Session\r\n" in built
         assert "c=IN IP4 192.168.1.100\r\n" in built
         assert "m=audio 49170 RTP/AVP 0 8 96\r\n" in built
 
-    def test_build_roundtrip(self) -> None:
+    def test_serialize_roundtrip(self) -> None:
         sdp = parse_sdp(SIMPLE_SDP)
-        built = build_sdp(sdp)
+        built = serialize_sdp(sdp)
         sdp2 = parse_sdp(built)
         assert sdp2.version == sdp.version
         assert sdp2.origin.session_id == sdp.origin.session_id
@@ -186,15 +184,46 @@ class TestBuildSdp:
         assert len(sdp2.media) == len(sdp.media)
         assert sdp2.media[0].port == sdp.media[0].port
 
-    def test_build_with_bandwidth(self) -> None:
+    def test_serialize_with_bandwidth(self) -> None:
         sdp = parse_sdp(SDP_WITH_BANDWIDTH)
-        built = build_sdp(sdp)
+        built = serialize_sdp(sdp)
         assert "b=AS:256\r\n" in built
         assert "b=TIAS:1024000\r\n" in built
 
 
-class TestNegotiateStub:
-    def test_not_implemented(self) -> None:
+class TestConvenienceProperties:
+    def test_audio_property(self) -> None:
+        sdp = parse_sdp(SIMPLE_SDP)
+        audio = sdp.audio
+        assert audio is not None
+        assert audio.media == "audio"
+        assert audio.port == 49170
+
+    def test_audio_none_for_video_only(self) -> None:
+        sdp = parse_sdp(SDP_WITH_BANDWIDTH)
+        assert sdp.audio is None
+
+    def test_rtp_address(self) -> None:
+        sdp = parse_sdp(SIMPLE_SDP)
+        addr = sdp.rtp_address
+        assert addr is not None
+        assert addr == ("192.168.1.100", 49170)
+
+    def test_rtp_address_media_level_connection(self) -> None:
+        raw = (
+            "v=0\r\n"
+            "o=- 0 0 IN IP4 0.0.0.0\r\n"
+            "s=-\r\n"
+            "c=IN IP4 10.0.0.1\r\n"
+            "t=0 0\r\n"
+            "m=audio 8000 RTP/AVP 0\r\n"
+            "c=IN IP4 10.0.0.2\r\n"
+        )
+        sdp = parse_sdp(raw)
+        addr = sdp.rtp_address
+        assert addr is not None
+        assert addr == ("10.0.0.2", 8000)
+
+    def test_rtp_address_none(self) -> None:
         sdp = SdpMessage()
-        with pytest.raises(NotImplementedError):
-            negotiate_sdp(sdp, sdp)
+        assert sdp.rtp_address is None

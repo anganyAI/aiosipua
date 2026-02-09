@@ -38,10 +38,12 @@ from .sdp import (
     MediaDescription,
     Origin,
     SdpMessage,
+    SdpNegotiationError,
     TimingField,
     build_sdp,
     negotiate_sdp,
     parse_sdp,
+    serialize_sdp,
 )
 from .utils import (
     generate_branch,
@@ -61,6 +63,7 @@ __all__ = [
     "MediaDescription",
     "Origin",
     "SdpMessage",
+    "SdpNegotiationError",
     "SipMessage",
     "SipRequest",
     "SipResponse",
@@ -81,6 +84,7 @@ __all__ = [
     "parse_uri",
     "parse_via",
     "prettify_header_name",
+    "serialize_sdp",
     "stringify_address",
     "stringify_auth",
     "stringify_cseq",

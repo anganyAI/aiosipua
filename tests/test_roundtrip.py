@@ -7,8 +7,8 @@ from aiosipua import (
     SipResponse,
     SipUri,
     Via,
-    build_sdp,
     parse_sdp,
+    serialize_sdp,
 )
 
 INVITE_WITH_SDP = (
@@ -170,7 +170,7 @@ class TestSdpInSipRoundtrip:
         sdp.connection.address = "10.0.0.1"
 
         # Rebuild SDP and replace body
-        msg.body = build_sdp(sdp)
+        msg.body = serialize_sdp(sdp)
         msg.content_type = "application/sdp"
 
         # Serialize full message
