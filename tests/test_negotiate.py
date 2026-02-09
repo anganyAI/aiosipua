@@ -159,9 +159,7 @@ class TestNegotiateBasic:
 
     def test_answer_structure(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         assert answer.version == 0
         assert answer.origin.address == "10.0.0.5"
         assert answer.origin.session_id == "99999"
@@ -212,9 +210,7 @@ class TestCodecPreference:
     def test_answer_only_includes_chosen_codec(self) -> None:
         """Answer should only include the chosen codec, not all offered codecs."""
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         audio = answer.audio
         assert audio is not None
         # formats should be chosen codec + dtmf only
@@ -237,17 +233,13 @@ class TestNoMatch:
     def test_no_audio_media(self) -> None:
         offer = parse_sdp(VIDEO_ONLY_OFFER)
         with pytest.raises(SdpNegotiationError, match="no audio"):
-            negotiate_sdp(
-                offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-            )
+            negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
 
 
 class TestDtmfNegotiation:
     def test_dtmf_included_when_offered(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         audio = answer.audio
         assert audio is not None
         # Should include telephone-event
@@ -259,9 +251,7 @@ class TestDtmfNegotiation:
 
     def test_dtmf_omitted_when_not_offered(self) -> None:
         offer = parse_sdp(OFFER_NO_DTMF)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         audio = answer.audio
         assert audio is not None
         # Should NOT include telephone-event
@@ -303,9 +293,7 @@ class TestDtmfNegotiation:
 class TestPtimeHandling:
     def test_offer_ptime_respected(self) -> None:
         offer = parse_sdp(OFFER_NO_DTMF)  # has a=ptime:30
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         audio = answer.audio
         assert audio is not None
         ptimes = audio.attributes.get("ptime", [])
@@ -346,17 +334,13 @@ class TestPtimeHandling:
 class TestDirectionNegotiation:
     def test_sendrecv_to_sendrecv(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)  # sendrecv
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         assert answer.audio is not None
         assert answer.audio.direction == "sendrecv"
 
     def test_sendonly_to_recvonly(self) -> None:
         offer = parse_sdp(OFFER_SENDONLY)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         assert answer.audio is not None
         assert answer.audio.direction == "recvonly"
 
@@ -364,17 +348,13 @@ class TestDirectionNegotiation:
 class TestSessionId:
     def test_explicit_session_id(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="42"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="42")
         assert answer.origin.session_id == "42"
         assert answer.origin.session_version == "42"
 
     def test_auto_session_id(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000)
         # Should be a numeric timestamp string
         int(answer.origin.session_id)  # should not raise
 

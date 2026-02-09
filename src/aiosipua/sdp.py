@@ -322,8 +322,7 @@ def serialize_sdp(sdp: SdpMessage) -> str:
     # o=
     o = sdp.origin
     lines.append(
-        f"o={o.username} {o.session_id} {o.session_version} "
-        f"{o.net_type} {o.addr_type} {o.address}"
+        f"o={o.username} {o.session_id} {o.session_version} {o.net_type} {o.addr_type} {o.address}"
     )
 
     # s=

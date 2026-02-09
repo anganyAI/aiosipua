@@ -115,9 +115,7 @@ class _UdpProtocol(asyncio.DatagramProtocol):
 class UdpSipTransport(SipTransport):
     """UDP SIP transport — each datagram is one complete SIP message."""
 
-    _udp_transport: asyncio.DatagramTransport | None = field(
-        default=None, init=False, repr=False
-    )
+    _udp_transport: asyncio.DatagramTransport | None = field(default=None, init=False, repr=False)
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -147,8 +145,8 @@ class TcpSipTransport(SipTransport):
     """TCP SIP transport — Content-Length framing for message boundaries."""
 
     _server: asyncio.Server | None = field(default=None, init=False, repr=False)
-    _connections: dict[tuple[str, int], tuple[asyncio.StreamReader, asyncio.StreamWriter]] = (
-        field(default_factory=dict, init=False, repr=False)
+    _connections: dict[tuple[str, int], tuple[asyncio.StreamReader, asyncio.StreamWriter]] = field(
+        default_factory=dict, init=False, repr=False
     )
 
     async def start(self) -> None:
@@ -196,14 +194,10 @@ class TcpSipTransport(SipTransport):
         Returns the (reader, writer) pair and stores it for subsequent :meth:`send` calls.
         The connection is also read in the background for incoming messages.
         """
-        reader, writer = await asyncio.open_connection(
-            remote_addr[0], remote_addr[1]
-        )
+        reader, writer = await asyncio.open_connection(remote_addr[0], remote_addr[1])
         self._connections[remote_addr] = (reader, writer)
         # Read incoming messages in background
-        asyncio.get_running_loop().create_task(
-            self._handle_incoming(reader, writer, remote_addr)
-        )
+        asyncio.get_running_loop().create_task(self._handle_incoming(reader, writer, remote_addr))
         return reader, writer
 
     async def _handle_incoming(

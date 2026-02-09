@@ -4,6 +4,11 @@ from __future__ import annotations
 
 __version__ = "0.1.0"
 
+from .dialog import (
+    Dialog,
+    DialogState,
+    create_dialog_from_request,
+)
 from .headers import (
     Address,
     AuthChallenge,
@@ -55,6 +60,10 @@ from .transport import (
     TcpSipTransport,
     UdpSipTransport,
 )
+from .uas import (
+    IncomingCall,
+    SipUAS,
+)
 from .utils import (
     generate_branch,
     generate_call_id,
@@ -70,6 +79,9 @@ __all__ = [
     "CSeq",
     "Codec",
     "ConnectionData",
+    "Dialog",
+    "DialogState",
+    "IncomingCall",
     "MediaDescription",
     "Origin",
     "SdpMessage",
@@ -78,6 +90,7 @@ __all__ = [
     "SipRequest",
     "SipResponse",
     "SipTransport",
+    "SipUAS",
     "SipUri",
     "TcpSipTransport",
     "TimingField",
@@ -87,6 +100,7 @@ __all__ = [
     "UdpSipTransport",
     "Via",
     "build_sdp",
+    "create_dialog_from_request",
     "expand_compact_header",
     "generate_branch",
     "generate_call_id",
