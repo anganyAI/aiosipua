@@ -60,6 +60,9 @@ from .transport import (
     TcpSipTransport,
     UdpSipTransport,
 )
+from .uac import (
+    SipUAC,
+)
 from .uas import (
     IncomingCall,
     SipUAS,
@@ -90,6 +93,7 @@ __all__ = [
     "SipRequest",
     "SipResponse",
     "SipTransport",
+    "SipUAC",
     "SipUAS",
     "SipUri",
     "TcpSipTransport",
