@@ -45,6 +45,16 @@ from .sdp import (
     parse_sdp,
     serialize_sdp,
 )
+from .transaction import (
+    Transaction,
+    TransactionLayer,
+    TransactionState,
+)
+from .transport import (
+    SipTransport,
+    TcpSipTransport,
+    UdpSipTransport,
+)
 from .utils import (
     generate_branch,
     generate_call_id,
@@ -67,8 +77,14 @@ __all__ = [
     "SipMessage",
     "SipRequest",
     "SipResponse",
+    "SipTransport",
     "SipUri",
+    "TcpSipTransport",
     "TimingField",
+    "Transaction",
+    "TransactionLayer",
+    "TransactionState",
+    "UdpSipTransport",
     "Via",
     "build_sdp",
     "expand_compact_header",
