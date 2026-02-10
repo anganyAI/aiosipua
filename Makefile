@@ -24,6 +24,6 @@ build-dist: clean
 	uv build
 
 publish: build-dist
-	uv publish
+	uv publish --username __token__ --password "$$(grep password ~/.pypirc | head -1 | cut -d' ' -f3)"
 
 release: lint typecheck test publish
