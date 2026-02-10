@@ -3,9 +3,23 @@ revision = 3
 requires-python = ">=3.11"
 
 [[package]]
+name = "aiortp"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/98/145289b75ab0a6de9a0aac3ff0983bb92c2bf05acdb05d678c3a7e23a94f/aiortp-0.1.0.tar.gz", hash = "sha256:c9bf0521480282d801be33f5203efb561e5cd007a276261973ca72d7cfa6eae2", size = 29225, upload-time = "2026-02-07T15:22:18.204Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/cc/7cd7be189fd87f87a684431d89d988eb4618e508d602ced9e833ba56a5d4/aiortp-0.1.0-py3-none-any.whl", hash = "sha256:1e519645a17e6c90ae7c94397ac63eded19fbf6f12d3d7f7b31d9fe851e9fc25", size = 22946, upload-time = "2026-02-07T15:22:16.609Z" },
+]
+
+[[package]]
 name = "aiosipua"
 version = "0.1.0"
 source = { editable = "." }
+
+[package.optional-dependencies]
+rtp = [
+    { name = "aiortp" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -16,6 +30,8 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "aiortp", marker = "extra == 'rtp'", specifier = ">=0.1.0" }]
+provides-extras = ["rtp"]
 
 [package.metadata.requires-dev]
 dev = [

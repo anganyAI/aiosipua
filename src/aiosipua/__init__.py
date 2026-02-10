@@ -36,6 +36,9 @@ from .message import (
     SipRequest,
     SipResponse,
 )
+from .rtp_bridge import (
+    CallSession,
+)
 from .sdp import (
     Bandwidth,
     Codec,
@@ -79,6 +82,7 @@ __all__ = [
     "AuthCredentials",
     "Bandwidth",
     "CaseInsensitiveDict",
+    "CallSession",
     "CSeq",
     "Codec",
     "ConnectionData",

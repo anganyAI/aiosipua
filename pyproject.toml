@@ -25,6 +25,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+rtp = ["aiortp>=0.1.0"]
+
 [project.urls]
 Homepage = "https://github.com/anganyAI/aiosipua"
 Repository = "https://github.com/anganyAI/aiosipua"
