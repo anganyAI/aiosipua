@@ -88,6 +88,7 @@ class CallSession:
 
         # RTP session (created in start())
         self._rtp_session: Any = None
+        self._clock_rate: int = 8000
         self._dtmf_payload_type = dtmf_payload_type
         self._closed = False
 
@@ -122,6 +123,25 @@ class CallSession:
             return self._rtp_session.stats  # type: ignore[no-any-return]
         return {}
 
+    @property
+    def codec_sample_rate(self) -> int:
+        """Actual audio sample rate of the negotiated codec.
+
+        For G.722, this returns 16000 (not the 8000 RTP clock rate).
+        Only available after start().
+        """
+        if self._rtp_session is not None and self._rtp_session.codec is not None:
+            return self._rtp_session.codec.sample_rate  # type: ignore[no-any-return]
+        return 8000
+
+    @property
+    def clock_rate(self) -> int:
+        """RTP clock rate from SDP negotiation.
+
+        For G.722, this returns 8000 (historical RFC 3551 quirk).
+        """
+        return self._clock_rate
+
     async def start(self) -> None:
         """Create and bind the aiortp RTPSession.
 
@@ -138,6 +158,8 @@ class CallSession:
                 if codec.payload_type == self._chosen_pt and codec.clock_rate > 0:
                     clock_rate = codec.clock_rate
                     break
+
+        self._clock_rate = clock_rate
 
         self._rtp_session = await aiortp.RTPSession.create(
             local_addr=(self._local_ip, self._rtp_port),
