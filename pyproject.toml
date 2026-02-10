@@ -10,7 +10,7 @@ readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.11"
 authors = [
-    { name = "anganyAI" },
+    { name = "Sylvain Boily", email = "sylvainboilydroid@gmail.com" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
