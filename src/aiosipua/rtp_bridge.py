@@ -64,6 +64,7 @@ class CallSession:
         dtmf_payload_type: int = 101,
         ptime: int = 20,
         session_id: str | None = None,
+        session_name: str = "-",
     ) -> None:
         self._local_ip = local_ip
         self._rtp_port = rtp_port
@@ -78,6 +79,7 @@ class CallSession:
             dtmf_payload_type=dtmf_payload_type,
             ptime=ptime,
             session_id=session_id,
+            session_name=session_name,
         )
 
         # Extract remote RTP address from the offer

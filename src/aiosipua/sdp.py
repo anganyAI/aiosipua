@@ -451,6 +451,7 @@ def negotiate_sdp(
     dtmf_payload_type: int = 101,
     ptime: int = 20,
     session_id: str | None = None,
+    session_name: str = "-",
 ) -> tuple[SdpMessage, int]:
     """Build an SDP answer from an offer (RFC 3264).
 
@@ -466,6 +467,7 @@ def negotiate_sdp(
             (default 101). Set to ``0`` to disable.
         ptime: Default packetization time if not specified in the offer.
         session_id: SDP session ID; auto-generated if ``None``.
+        session_name: SDP session name (``s=`` line); defaults to ``"-"``.
 
     Returns:
         ``(answer_sdp, chosen_payload_type)``
@@ -560,7 +562,7 @@ def negotiate_sdp(
             addr_type="IP4",
             address=local_ip,
         ),
-        session_name="-",
+        session_name=session_name,
         connection=ConnectionData(net_type="IN", addr_type="IP4", address=local_ip),
         timing=TimingField(start_time=0, stop_time=0),
         media=[answer_media],

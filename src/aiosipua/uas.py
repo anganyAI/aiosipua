@@ -43,6 +43,7 @@ class IncomingCall:
     sdp_offer: SdpMessage | None = None
     transport: SipTransport | None = field(default=None, repr=False)
     source_addr: tuple[str, int] = ("0.0.0.0", 0)
+    user_agent: str | None = field(default=None, repr=False)
     _answered: bool = field(default=False, init=False, repr=False)
 
     @property
@@ -171,6 +172,8 @@ class IncomingCall:
             resp.body = body
         if content_type:
             resp.headers.set_single("Content-Type", content_type)
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
 
         if self.transport is not None:
             self.transport.send_reply(resp)
@@ -191,9 +194,15 @@ class SipUAS:
         await uas.start()
     """
 
-    def __init__(self, transport: SipTransport) -> None:
+    def __init__(
+        self,
+        transport: SipTransport,
+        *,
+        user_agent: str | None = None,
+    ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
+        self.user_agent = user_agent
 
         # Callbacks
         self.on_invite: InviteCallback | None = None
@@ -282,6 +291,7 @@ class SipUAS:
             sdp_offer=sdp_offer,
             transport=self.transport,
             source_addr=addr,
+            user_agent=self.user_agent,
         )
 
         self._calls[call_id] = call
@@ -313,6 +323,8 @@ class SipUAS:
 
         # Send 200 OK for BYE
         resp = call.dialog.create_response(request, 200, "OK")
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
         self.transport.send_reply(resp)
 
         # Terminate dialog and remove call
@@ -334,6 +346,8 @@ class SipUAS:
 
         # Send 200 OK for the CANCEL itself
         resp = call.dialog.create_response(request, 200, "OK")
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
         self.transport.send_reply(resp)
 
         # Send 487 Request Terminated for the original INVITE
@@ -378,6 +392,8 @@ class SipUAS:
             resp.headers.set_single("CSeq", cseq)
 
         resp.headers.set_single("Allow", "INVITE, ACK, BYE, CANCEL, OPTIONS")
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
 
         self.transport.send_reply(resp)
 
@@ -404,5 +420,8 @@ class SipUAS:
         cseq = request.headers.get_first("cseq")
         if cseq:
             resp.headers.set_single("CSeq", cseq)
+
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
 
         self.transport.send_reply(resp)
