@@ -269,7 +269,7 @@ class SipUAS:
         """Handle an incoming INVITE (new call or re-INVITE)."""
         call_id = request.call_id or ""
 
-        # Check for re-INVITE (existing dialog)
+        # Check for re-INVITE (existing dialog in UAS)
         existing = self._calls.get(call_id)
         if existing and existing.dialog.state == DialogState.CONFIRMED:
             # re-INVITE
@@ -279,6 +279,28 @@ class SipUAS:
                 existing.sdp_offer = parse_sdp(request.body)
             if self.on_reinvite is not None:
                 self.on_reinvite(existing)
+            return
+
+        # Check for re-INVITE on an outbound call (dialog lives in UAC)
+        if self.uac is not None and call_id in self.uac._calls:
+            # Build an IncomingCall wrapper so the re-INVITE handler can
+            # send responses (accept/reject) through the same interface.
+            dialog = create_dialog_from_request(request)
+            dialog.confirm()  # outbound dialog is already confirmed
+            sdp_offer: SdpMessage | None = None
+            if request.body and request.content_type == "application/sdp":
+                sdp_offer = parse_sdp(request.body)
+            wrapper = IncomingCall(
+                dialog=dialog,
+                invite=request,
+                sdp_offer=sdp_offer,
+                transport=self.transport,
+                source_addr=addr,
+                user_agent=self.user_agent,
+            )
+            wrapper._answered = True  # prevent reject(487) on CANCEL
+            if self.on_reinvite is not None:
+                self.on_reinvite(wrapper)
             return
 
         # New INVITE — create dialog
@@ -319,6 +341,22 @@ class SipUAS:
         """Handle an incoming BYE (terminates a call)."""
         call_id = request.call_id or ""
         call = self._calls.get(call_id)
+
+        # Check UAC's calls for outbound dialogs
+        if call is None and self.uac is not None and call_id in self.uac._calls:
+            # Build a wrapper so on_bye callback has the same interface
+            dialog = create_dialog_from_request(request)
+            dialog.confirm()
+            call = IncomingCall(
+                dialog=dialog,
+                invite=request,
+                transport=self.transport,
+                source_addr=addr,
+                user_agent=self.user_agent,
+            )
+            call._answered = True
+            # Remove from UAC tracking
+            self.uac._calls.pop(call_id, None)
 
         if call is None:
             # No matching dialog — 481

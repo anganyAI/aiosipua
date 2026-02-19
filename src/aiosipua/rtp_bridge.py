@@ -65,6 +65,9 @@ class CallSession:
         ptime: int = 20,
         session_id: str | None = None,
         session_name: str = "-",
+        jitter_capacity: int = 16,
+        jitter_prefetch: int = 4,
+        skip_audio_gaps: bool = False,
     ) -> None:
         self._local_ip = local_ip
         self._rtp_port = rtp_port
@@ -92,6 +95,9 @@ class CallSession:
         self._rtp_session: Any = None
         self._clock_rate: int = 8000
         self._dtmf_payload_type = dtmf_payload_type
+        self._jitter_capacity = jitter_capacity
+        self._jitter_prefetch = jitter_prefetch
+        self._skip_audio_gaps = skip_audio_gaps
         self._closed = False
 
         # User callbacks
@@ -169,6 +175,9 @@ class CallSession:
             payload_type=self._chosen_pt,
             clock_rate=clock_rate,
             dtmf_payload_type=self._dtmf_payload_type,
+            jitter_capacity=self._jitter_capacity,
+            jitter_prefetch=self._jitter_prefetch,
+            skip_audio_gaps=self._skip_audio_gaps,
         )
 
         # Wire up callbacks
