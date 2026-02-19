@@ -21,6 +21,7 @@ from .utils import generate_tag
 
 if TYPE_CHECKING:
     from .transport import SipTransport
+    from .uac import SipUAC
 
 logger = logging.getLogger(__name__)
 
@@ -199,10 +200,12 @@ class SipUAS:
         transport: SipTransport,
         *,
         user_agent: str | None = None,
+        uac: SipUAC | None = None,
     ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
         self.user_agent = user_agent
+        self.uac: SipUAC | None = uac
 
         # Callbacks
         self.on_invite: InviteCallback | None = None
@@ -241,7 +244,8 @@ class SipUAS:
         """Internal message handler dispatched by the transport."""
         if isinstance(msg, SipRequest):
             self._handle_request(msg, addr)
-        # Responses are not handled by a UAS
+        elif isinstance(msg, SipResponse) and self.uac is not None:
+            self.uac.handle_response(msg, addr)
 
     def _handle_request(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Route an incoming request to the appropriate handler."""

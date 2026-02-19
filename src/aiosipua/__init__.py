@@ -64,6 +64,8 @@ from .transport import (
     UdpSipTransport,
 )
 from .uac import (
+    OutgoingCall,
+    SipDigestAuth,
     SipUAC,
 )
 from .uas import (
@@ -90,9 +92,11 @@ __all__ = [
     "DialogState",
     "IncomingCall",
     "MediaDescription",
+    "OutgoingCall",
     "Origin",
     "SdpMessage",
     "SdpNegotiationError",
+    "SipDigestAuth",
     "SipMessage",
     "SipRequest",
     "SipResponse",
