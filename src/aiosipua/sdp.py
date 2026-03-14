@@ -126,6 +126,14 @@ class SdpMessage:
         return None
 
     @property
+    def video(self) -> MediaDescription | None:
+        """First video :class:`MediaDescription`, or ``None``."""
+        for m in self.media:
+            if m.media == "video":
+                return m
+        return None
+
+    @property
     def rtp_address(self) -> tuple[str, int] | None:
         """``(ip, port)`` for the first audio media stream.
 
@@ -138,6 +146,17 @@ class SdpMessage:
         if conn is None:
             return None
         return (conn.address, audio.port)
+
+    @property
+    def video_rtp_address(self) -> tuple[str, int] | None:
+        """``(ip, port)`` for the first video media stream."""
+        video = self.video
+        if video is None:
+            return None
+        conn = video.connection or self.connection
+        if conn is None:
+            return None
+        return (conn.address, video.port)
 
 
 # --- Parsing ---
@@ -419,6 +438,19 @@ def build_sdp(
     )
     media.codecs = _extract_codecs(media)
 
+    return _build_sdp_envelope(local_ip, session_id, "-", [media])
+
+
+# --- SDP envelope helper ---
+
+
+def _build_sdp_envelope(
+    local_ip: str,
+    session_id: str,
+    session_name: str,
+    media: list[MediaDescription],
+) -> SdpMessage:
+    """Build the common SDP envelope (origin, connection, timing)."""
     return SdpMessage(
         version=0,
         origin=Origin(
@@ -429,10 +461,10 @@ def build_sdp(
             addr_type="IP4",
             address=local_ip,
         ),
-        session_name="-",
+        session_name=session_name,
         connection=ConnectionData(net_type="IN", addr_type="IP4", address=local_ip),
         timing=TimingField(start_time=0, stop_time=0),
-        media=[media],
+        media=media,
     )
 
 
@@ -552,20 +584,5 @@ def negotiate_sdp(
     )
     answer_media.codecs = _extract_codecs(answer_media)
 
-    answer = SdpMessage(
-        version=0,
-        origin=Origin(
-            username="-",
-            session_id=session_id,
-            session_version=session_id,
-            net_type="IN",
-            addr_type="IP4",
-            address=local_ip,
-        ),
-        session_name=session_name,
-        connection=ConnectionData(net_type="IN", addr_type="IP4", address=local_ip),
-        timing=TimingField(start_time=0, stop_time=0),
-        media=[answer_media],
-    )
-
+    answer = _build_sdp_envelope(local_ip, session_id, session_name, [answer_media])
     return answer, chosen.payload_type

@@ -32,7 +32,65 @@ def _import_aiortp() -> Any:
     return aiortp
 
 
-class CallSession:
+class _BaseCallSession:
+    """Shared lifecycle for audio and video RTP sessions."""
+
+    def __init__(
+        self,
+        local_ip: str,
+        rtp_port: int,
+        remote_addr: tuple[str, int],
+        sdp_answer: SdpMessage,
+        chosen_pt: int,
+    ) -> None:
+        self._local_ip = local_ip
+        self._rtp_port = rtp_port
+        self._remote_addr = remote_addr
+        self._sdp_answer = sdp_answer
+        self._chosen_pt = chosen_pt
+        self._session: Any = None
+        self._closed = False
+
+    @property
+    def sdp_answer(self) -> SdpMessage:
+        """The negotiated SDP answer."""
+        return self._sdp_answer
+
+    @property
+    def chosen_payload_type(self) -> int:
+        """The chosen codec payload type from negotiation."""
+        return self._chosen_pt
+
+    @property
+    def remote_addr(self) -> tuple[str, int]:
+        """The remote RTP address from the SDP offer."""
+        return self._remote_addr
+
+    @property
+    def stats(self) -> dict[str, Any]:
+        """RTP session statistics, or empty dict if not started."""
+        if self._session is not None:
+            return self._session.stats  # type: ignore[no-any-return]
+        return {}
+
+    def update_remote(self, addr: tuple[str, int]) -> None:
+        """Update the remote RTP address (e.g. after re-INVITE)."""
+        self._remote_addr = addr
+        if self._session is not None:
+            self._session.update_remote(addr)
+
+    async def close(self) -> None:
+        """Close the RTP session and release resources."""
+        if self._closed:
+            return
+        self._closed = True
+
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
+
+class CallSession(_BaseCallSession):
     """Manages a single call's RTP session alongside its SIP dialog.
 
     Bridges the output of :func:`negotiate_sdp` to ``aiortp.RTPSession.create()``,
@@ -69,12 +127,7 @@ class CallSession:
         jitter_prefetch: int = 4,
         skip_audio_gaps: bool = False,
     ) -> None:
-        self._local_ip = local_ip
-        self._rtp_port = rtp_port
-        self._offer = offer
-
-        # Negotiate SDP upfront
-        self._sdp_answer, self._chosen_pt = negotiate_sdp(
+        sdp_answer, chosen_pt = negotiate_sdp(
             offer=offer,
             local_ip=local_ip,
             rtp_port=rtp_port,
@@ -85,51 +138,26 @@ class CallSession:
             session_name=session_name,
         )
 
-        # Extract remote RTP address from the offer
         rtp_addr = offer.rtp_address
         if rtp_addr is None:
             raise ValueError("SDP offer has no RTP address (missing c= or m= audio)")
-        self._remote_addr = rtp_addr
 
-        # RTP session (created in start())
-        self._rtp_session: Any = None
+        super().__init__(local_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt)
+
         self._clock_rate: int = 8000
         self._dtmf_payload_type = dtmf_payload_type
         self._jitter_capacity = jitter_capacity
         self._jitter_prefetch = jitter_prefetch
         self._skip_audio_gaps = skip_audio_gaps
-        self._closed = False
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
         self.on_dtmf: Callable[[str, int], None] | None = None
 
     @property
-    def sdp_answer(self) -> SdpMessage:
-        """The negotiated SDP answer to include in the 200 OK."""
-        return self._sdp_answer
-
-    @property
-    def chosen_payload_type(self) -> int:
-        """The chosen codec payload type from negotiation."""
-        return self._chosen_pt
-
-    @property
-    def remote_addr(self) -> tuple[str, int]:
-        """The remote RTP address from the SDP offer."""
-        return self._remote_addr
-
-    @property
     def rtp_session(self) -> Any:
         """The underlying ``aiortp.RTPSession``, or ``None`` before :meth:`start`."""
-        return self._rtp_session
-
-    @property
-    def stats(self) -> dict[str, Any]:
-        """RTP session statistics, or empty dict if not started."""
-        if self._rtp_session is not None:
-            return self._rtp_session.stats  # type: ignore[no-any-return]
-        return {}
+        return self._session
 
     @property
     def codec_sample_rate(self) -> int:
@@ -138,8 +166,8 @@ class CallSession:
         For G.722, this returns 16000 (not the 8000 RTP clock rate).
         Only available after start().
         """
-        if self._rtp_session is not None and self._rtp_session.codec is not None:
-            return self._rtp_session.codec.sample_rate  # type: ignore[no-any-return]
+        if self._session is not None and self._session.codec is not None:
+            return self._session.codec.sample_rate  # type: ignore[no-any-return]
         return 8000
 
     @property
@@ -169,7 +197,7 @@ class CallSession:
 
         self._clock_rate = clock_rate
 
-        self._rtp_session = await aiortp.RTPSession.create(
+        self._session = await aiortp.RTPSession.create(
             local_addr=(self._local_ip, self._rtp_port),
             remote_addr=self._remote_addr,
             payload_type=self._chosen_pt,
@@ -181,8 +209,8 @@ class CallSession:
         )
 
         # Wire up callbacks
-        self._rtp_session.on_audio = self._handle_audio
-        self._rtp_session.on_dtmf = self._handle_dtmf
+        self._session.on_audio = self._handle_audio
+        self._session.on_dtmf = self._handle_dtmf
 
     def _handle_audio(self, pcm: bytes, timestamp: int) -> None:
         """Forward decoded audio to user callback."""
@@ -196,31 +224,15 @@ class CallSession:
 
     def send_audio(self, payload: bytes, timestamp: int) -> None:
         """Send encoded audio payload via RTP."""
-        if self._rtp_session is not None and not self._closed:
-            self._rtp_session.send_audio(payload, timestamp)
+        if self._session is not None and not self._closed:
+            self._session.send_audio(payload, timestamp)
 
     def send_audio_pcm(self, pcm: bytes, timestamp: int) -> None:
         """Send raw PCM audio, encoding with the negotiated codec."""
-        if self._rtp_session is not None and not self._closed:
-            self._rtp_session.send_audio_pcm(pcm, timestamp)
+        if self._session is not None and not self._closed:
+            self._session.send_audio_pcm(pcm, timestamp)
 
     def send_dtmf(self, digit: str, duration_ms: int = 160) -> None:
         """Send a DTMF digit via RTP telephone-event."""
-        if self._rtp_session is not None and not self._closed:
-            self._rtp_session.send_dtmf(digit, duration_ms)
-
-    def update_remote(self, addr: tuple[str, int]) -> None:
-        """Update the remote RTP address (e.g. after re-INVITE)."""
-        self._remote_addr = addr
-        if self._rtp_session is not None:
-            self._rtp_session.update_remote(addr)
-
-    async def close(self) -> None:
-        """Close the RTP session and release resources."""
-        if self._closed:
-            return
-        self._closed = True
-
-        if self._rtp_session is not None:
-            await self._rtp_session.close()
-            self._rtp_session = None
+        if self._session is not None and not self._closed:
+            self._session.send_dtmf(digit, duration_ms)

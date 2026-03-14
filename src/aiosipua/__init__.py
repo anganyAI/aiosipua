@@ -53,6 +53,14 @@ from .sdp import (
     parse_sdp,
     serialize_sdp,
 )
+from .sdp_video import (
+    build_video_sdp,
+    negotiate_av_sdp,
+    negotiate_video_sdp,
+)
+from .video_bridge import (
+    VideoCallSession,
+)
 from .transaction import (
     Transaction,
     TransactionLayer,
@@ -85,6 +93,7 @@ __all__ = [
     "Bandwidth",
     "CaseInsensitiveDict",
     "CallSession",
+    "VideoCallSession",
     "CSeq",
     "Codec",
     "ConnectionData",
@@ -112,12 +121,15 @@ __all__ = [
     "UdpSipTransport",
     "Via",
     "build_sdp",
+    "build_video_sdp",
     "create_dialog_from_request",
     "expand_compact_header",
     "generate_branch",
     "generate_call_id",
     "generate_tag",
+    "negotiate_av_sdp",
     "negotiate_sdp",
+    "negotiate_video_sdp",
     "parse_address",
     "parse_auth",
     "parse_cseq",
