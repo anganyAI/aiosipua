@@ -1,5 +1,8 @@
 # aiosipua
 
+[![CI](https://github.com/anganyAI/aiosipua/actions/workflows/ci.yml/badge.svg)](https://github.com/anganyAI/aiosipua/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/aiosipua)](https://pypi.org/project/aiosipua/)
+
 Asyncio SIP micro-library for Python. Companion to [aiortp](https://github.com/anganyAI/aiortp).
 
 Built for voice AI backends that need SIP signaling without the bloat of a full
@@ -11,15 +14,20 @@ SIP stack. Zero runtime dependencies, strict type hints, Python 3.11+.
   expansion, multi-value header splitting, structured accessors
 - **SDP parsing, building, and negotiation** — RFC 4566 / RFC 3264, codec
   selection, DTMF, direction handling, bandwidth support
+- **Video SDP negotiation** — `negotiate_video_sdp`, `negotiate_av_sdp` for
+  combined audio+video, `build_video_sdp` for outgoing video offers
 - **Transports** — UDP (`DatagramProtocol`) and TCP (Content-Length framing)
 - **UAS** — incoming call handling with INVITE/BYE/CANCEL/OPTIONS dispatch,
   auto 100 Trying, `IncomingCall` high-level API
-- **UAC** — backend-initiated BYE, re-INVITE (hold/unhold), CANCEL, INFO (DTMF)
+- **UAC** — outbound INVITE with `send_invite`, backend-initiated BYE,
+  re-INVITE (hold/unhold), CANCEL, INFO (DTMF)
+- **SIP digest authentication** — automatic 401/407 retry with
+  `SipDigestAuth` for outbound calls
 - **Dialog management** — RFC 3261 dialog state machine, Record-Route support,
   in-dialog request/response creation
 - **Transaction matching** — client and server transaction layer
-- **aiortp bridge** — `CallSession` bridging SDP negotiation to RTP media with
-  audio/DTMF callbacks
+- **aiortp bridge** — `CallSession` for audio RTP and `VideoCallSession` for
+  video RTP, bridging SDP negotiation to media with callbacks
 - **X-header support** — pass application metadata (room ID, session ID, tenant)
   through SIP headers
 
@@ -99,6 +107,25 @@ print(f"Chosen codec: payload type {chosen_pt}")
 print(serialize_sdp(answer))
 ```
 
+### Video SDP negotiation
+
+```python
+from aiosipua import parse_sdp, negotiate_av_sdp, serialize_sdp
+
+# Negotiate both audio and video from a single offer
+offer = parse_sdp(sdp_body)
+answer, audio_pt, video_pt = negotiate_av_sdp(
+    offer=offer,
+    local_ip="10.0.0.5",
+    audio_rtp_port=30000,
+    video_rtp_port=30002,
+    supported_video_codecs=["H264", "VP8"],
+)
+
+print(f"Audio PT: {audio_pt}, Video PT: {video_pt}")
+print(serialize_sdp(answer))
+```
+
 ### Receive calls with the UAS
 
 ```python
@@ -147,6 +174,35 @@ async def main():
 asyncio.run(main())
 ```
 
+### Video call session
+
+```python
+from aiosipua import parse_sdp
+from aiosipua.video_bridge import VideoCallSession
+
+offer = parse_sdp(sdp_body)
+
+session = VideoCallSession(
+    local_ip="10.0.0.5",
+    rtp_port=30002,
+    offer=offer,
+    supported_video_codecs=["H264"],
+)
+await session.start()
+
+# Receive video frames
+session.on_frame = lambda nal, ts, kf: process_video(nal, ts, kf)
+session.on_keyframe_needed = lambda: encoder.force_keyframe()
+
+# Send video frames
+session.send_frame(nal_units, timestamp, keyframe=True)
+
+# Request a keyframe from remote
+session.request_keyframe()
+
+await session.close()
+```
+
 ### Backend-initiated actions with the UAC
 
 ```python
@@ -175,6 +231,27 @@ uac.send_info(
     body="Signal=5\r\nDuration=250\r\n",
     content_type="application/dtmf-relay",
     remote_addr=("10.0.0.1", 5060),
+)
+```
+
+### Outbound calls with digest authentication
+
+```python
+from aiosipua import SipUAC, SipDigestAuth, build_sdp
+from aiosipua.transport import UdpSipTransport
+
+transport = UdpSipTransport(local_addr=("0.0.0.0", 5060))
+uac = SipUAC(transport)
+
+sdp = build_sdp(local_ip="10.0.0.5", rtp_port=30000, payload_type=0, codec_name="PCMU")
+auth = SipDigestAuth(username="alice", password="secret")
+
+call = uac.send_invite(
+    from_uri="sip:alice@example.com",
+    to_uri="sip:bob@example.com",
+    remote_addr=("proxy.example.com", 5060),
+    sdp=sdp,
+    auth=auth,  # auto-retries on 401/407
 )
 ```
 
@@ -247,9 +324,14 @@ asyncio.run(main())
        ▼                                       ▼
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │  Transaction │    │  SDP/Codec   │    │  CallSession │
-│  Layer       │    │  Negotiation │    │  (RTP bridge)│
-└──────┬───────┘    └──────────────┘    └──────┬───────┘
-       │                                       │
+│  Layer       │    │  Negotiation │    │  (audio RTP) │
+└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
+       │                   │                   │
+       │            ┌──────┴───────┐    ┌──────┴────────┐
+       │            │ Video SDP    │    │ VideoCall     │
+       │            │ Negotiation  │    │ Session       │
+       │            └──────────────┘    │ (video RTP)   │
+       │                                └──────┬────────┘
        ▼                                       ▼
 ┌──────────────┐                        ┌──────────────┐
 │  Transport   │                        │  aiortp      │
@@ -267,4 +349,4 @@ See the [`examples/`](examples/) directory:
 
 ## License
 
-BSD-3-Clause. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.
