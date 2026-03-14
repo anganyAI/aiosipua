@@ -523,9 +523,7 @@ class TestSendInvite:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         assert isinstance(call, OutgoingCall)
         assert call.caller == "sip:me@example.com"
@@ -550,9 +548,7 @@ class TestSendInvite:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
         invite = call.invite
 
         # From
@@ -598,7 +594,9 @@ class TestSendInvite:
 
         sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             sdp_offer=sdp,
         )
 
@@ -615,9 +613,7 @@ class TestSendInvite:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         assert call.invite.body == ""
         assert call.sdp_offer is None
@@ -627,7 +623,9 @@ class TestSendInvite:
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             extra_headers={"X-Room-ID": "room-42", "X-Session-ID": "sess-1"},
         )
 
@@ -639,7 +637,9 @@ class TestSendInvite:
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             user_agent="RoomKit/1.0",
         )
 
@@ -650,9 +650,7 @@ class TestSendInvite:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         assert uac.get_call(call.call_id) is call
 
@@ -675,7 +673,9 @@ class TestHandleResponse:
         uac = SipUAC(transport)  # type: ignore[arg-type]
         sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             sdp_offer=sdp,
         )
         return transport, uac, call
@@ -743,7 +743,9 @@ class TestHandleResponse:
         sdp_body = serialize_sdp(sdp_answer)
 
         raw = _make_response(
-            call.invite, 200, "OK",
+            call.invite,
+            200,
+            "OK",
             remote_tag=remote_tag,
             sdp_body=sdp_body,
         )
@@ -764,7 +766,9 @@ class TestHandleResponse:
         sdp_body = serialize_sdp(sdp_answer)
 
         raw = _make_response(
-            call.invite, 200, "OK",
+            call.invite,
+            200,
+            "OK",
             remote_tag="rtag",
             sdp_body=sdp_body,
         )
@@ -886,9 +890,7 @@ class TestOutgoingCallMethods:
     def test_cancel_early_dialog(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
         transport.sent.clear()
 
         result = call.cancel(uac)
@@ -901,9 +903,7 @@ class TestOutgoingCallMethods:
     def test_cancel_confirmed_returns_none(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         # Force dialog to confirmed
         call.dialog.confirm()
@@ -914,9 +914,7 @@ class TestOutgoingCallMethods:
     def test_hangup_confirmed_dialog(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         # Simulate 200 OK to confirm
         raw = _make_response(call.invite, 200, "OK", remote_tag="rtag")
@@ -936,9 +934,7 @@ class TestOutgoingCallMethods:
     def test_hangup_early_returns_none(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         result = call.hangup(uac)
         assert result is None
@@ -946,9 +942,7 @@ class TestOutgoingCallMethods:
     def test_call_properties(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         assert call.call_id == call.dialog.call_id
         assert call.caller == "sip:me@example.com"
@@ -960,9 +954,7 @@ class TestWaitAnswered:
     async def test_wait_answered_success(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         # Simulate 200 OK in a background task
         async def answer_later() -> None:
@@ -982,9 +974,7 @@ class TestWaitAnswered:
     async def test_wait_answered_rejected(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         # Simulate rejection in a background task
         async def reject_later() -> None:
@@ -1002,9 +992,7 @@ class TestWaitAnswered:
     async def test_wait_answered_timeout(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         with pytest.raises(TimeoutError):
             await call.wait_answered(timeout=0.05)
@@ -1020,9 +1008,7 @@ class TestUASResponseForwarding:
         transport.on_message = uas._on_message
 
         # Send INVITE via UAC
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         # Inject a 180 Ringing response via UAS transport
         ringing_events: list[OutgoingCall] = []
@@ -1040,15 +1026,15 @@ class TestUASResponseForwarding:
         uas = SipUAS(transport, uac=uac)  # type: ignore[arg-type]
         transport.on_message = uas._on_message
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         sdp_answer = build_sdp("10.0.0.1", 20000, 0, "PCMU")
         sdp_body = serialize_sdp(sdp_answer)
 
         raw = _make_response(
-            call.invite, 200, "OK",
+            call.invite,
+            200,
+            "OK",
             remote_tag="rtag-200",
             sdp_body=sdp_body,
         )
@@ -1092,7 +1078,9 @@ class TestFullOutboundCallFlow:
         # 1. Send INVITE
         sdp_offer = build_sdp("10.0.0.2", 30000, 0, "PCMU")
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             sdp_offer=sdp_offer,
         )
         call.on_ringing = lambda c: ringing_events.append(c)
@@ -1117,7 +1105,9 @@ class TestFullOutboundCallFlow:
         sdp_answer = build_sdp("10.0.0.1", 20000, 0, "PCMU")
         sdp_body = serialize_sdp(sdp_answer)
         raw_200 = _make_response(
-            call.invite, 200, "OK",
+            call.invite,
+            200,
+            "OK",
             remote_tag="callee-tag",
             sdp_body=sdp_body,
         )
@@ -1151,9 +1141,7 @@ class TestFullOutboundCallFlow:
 
         reject_events: list[tuple[OutgoingCall, int, str]] = []
 
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
         call.on_rejected = lambda c, code, reason: reject_events.append((c, code, reason))
 
         # 100 Trying
@@ -1174,9 +1162,7 @@ class TestRemoveCall:
     def test_remove_call(self) -> None:
         transport = FakeTransport()
         uac = SipUAC(transport)  # type: ignore[arg-type]
-        call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR
-        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
         assert uac.get_call(call.call_id) is not None
         uac.remove_call(call.call_id)
@@ -1195,14 +1181,8 @@ class TestRemoveCall:
 class TestDigestAuth:
     """Tests for SIP digest authentication on outbound INVITE."""
 
-    CHALLENGE_407 = (
-        'Digest realm="asterisk", nonce="abc123def456",'
-        ' algorithm=MD5, qop="auth"'
-    )
-    CHALLENGE_401 = (
-        'Digest realm="example.com", nonce="nonce-401-value",'
-        ' algorithm=MD5'
-    )
+    CHALLENGE_407 = 'Digest realm="asterisk", nonce="abc123def456", algorithm=MD5, qop="auth"'
+    CHALLENGE_401 = 'Digest realm="example.com", nonce="nonce-401-value", algorithm=MD5'
 
     def _make_uac_and_call_with_auth(
         self,
@@ -1214,7 +1194,9 @@ class TestDigestAuth:
         uac = SipUAC(transport)  # type: ignore[arg-type]
         sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             sdp_offer=sdp,
             auth=auth,
         )
@@ -1228,7 +1210,9 @@ class TestDigestAuth:
 
         # Inject 407
         raw = _make_response(
-            original_invite, 407, "Proxy Authentication Required",
+            original_invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp = SipMessage.parse(raw)
@@ -1270,7 +1254,10 @@ class TestDigestAuth:
         # Now simulate 200 OK to the retried INVITE
         transport.sent.clear()
         raw_200 = _make_response(
-            call.invite, 200, "OK", remote_tag="rtag",
+            call.invite,
+            200,
+            "OK",
+            remote_tag="rtag",
         )
         resp_200 = SipMessage.parse(raw_200)
         assert isinstance(resp_200, SipResponse)
@@ -1286,7 +1273,9 @@ class TestDigestAuth:
         transport.sent.clear()
 
         raw = _make_response(
-            original_invite, 401, "Unauthorized",
+            original_invite,
+            401,
+            "Unauthorized",
             extra_headers={"WWW-Authenticate": self.CHALLENGE_401},
         )
         resp = SipMessage.parse(raw)
@@ -1338,7 +1327,9 @@ class TestDigestAuth:
 
         # First 407 → triggers retry
         raw_407 = _make_response(
-            original_invite, 407, "Proxy Authentication Required",
+            original_invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp = SipMessage.parse(raw_407)
@@ -1350,7 +1341,9 @@ class TestDigestAuth:
         # Second 407 → should reject (wrong password scenario)
         transport.sent.clear()
         raw_407_again = _make_response(
-            call.invite, 407, "Proxy Authentication Required",
+            call.invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp2 = SipMessage.parse(raw_407_again)
@@ -1367,14 +1360,18 @@ class TestDigestAuth:
         uac = SipUAC(transport)  # type: ignore[arg-type]
         sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
         call = uac.send_invite(
-            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR,
+            "sip:me@example.com",
+            "sip:them@example.com",
+            REMOTE_ADDR,
             sdp_offer=sdp,
             # No auth parameter
         )
         transport.sent.clear()
 
         raw = _make_response(
-            call.invite, 407, "Proxy Authentication Required",
+            call.invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp = SipMessage.parse(raw)
@@ -1392,7 +1389,9 @@ class TestDigestAuth:
         transport.sent.clear()
 
         raw = _make_response(
-            call.invite, 407, "Proxy Authentication Required",
+            call.invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": 'Basic realm="asterisk"'},
         )
         resp = SipMessage.parse(raw)
@@ -1410,7 +1409,9 @@ class TestDigestAuth:
         transport.sent.clear()
 
         raw = _make_response(
-            call.invite, 407, "Proxy Authentication Required",
+            call.invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp = SipMessage.parse(raw)
@@ -1435,7 +1436,9 @@ class TestDigestAuth:
         transport.sent.clear()
 
         raw = _make_response(
-            call.invite, 407, "Proxy Authentication Required",
+            call.invite,
+            407,
+            "Proxy Authentication Required",
             extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
         resp = SipMessage.parse(raw)

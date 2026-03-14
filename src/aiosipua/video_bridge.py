@@ -17,8 +17,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from .rtp_bridge import _BaseCallSession, _import_aiortp
-from .sdp import SdpMessage
 from .sdp_video import negotiate_video_sdp
+
+if TYPE_CHECKING:
+    from .sdp import SdpMessage
 
 
 class VideoCallSession(_BaseCallSession):
@@ -127,9 +129,7 @@ class VideoCallSession(_BaseCallSession):
         if self.on_keyframe_needed is not None:
             self.on_keyframe_needed()
 
-    def send_frame(
-        self, nal_units: list[bytes], timestamp: int, keyframe: bool = False
-    ) -> None:
+    def send_frame(self, nal_units: list[bytes], timestamp: int, keyframe: bool = False) -> None:
         """Packetize and send video NAL units via RTP."""
         if self._session is not None and not self._closed:
             self._session.send_frame(nal_units, timestamp, keyframe)

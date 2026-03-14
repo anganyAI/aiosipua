@@ -58,9 +58,6 @@ from .sdp_video import (
     negotiate_av_sdp,
     negotiate_video_sdp,
 )
-from .video_bridge import (
-    VideoCallSession,
-)
 from .transaction import (
     Transaction,
     TransactionLayer,
@@ -84,6 +81,9 @@ from .utils import (
     generate_branch,
     generate_call_id,
     generate_tag,
+)
+from .video_bridge import (
+    VideoCallSession,
 )
 
 __all__ = [

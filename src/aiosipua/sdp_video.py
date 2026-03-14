@@ -6,11 +6,11 @@ import logging
 import time
 
 from .sdp import (
+    _DIRECTION_ANSWER,
     Codec,
     MediaDescription,
     SdpMessage,
     SdpNegotiationError,
-    _DIRECTION_ANSWER,
     _build_sdp_envelope,
     _extract_codecs,
     negotiate_sdp,

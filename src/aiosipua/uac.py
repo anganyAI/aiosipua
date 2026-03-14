@@ -72,9 +72,7 @@ class OutgoingCall:
     # Callbacks (optional)
     on_ringing: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
     on_answer: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
-    on_rejected: Callable[[OutgoingCall, int, str], Any] | None = field(
-        default=None, repr=False
-    )
+    on_rejected: Callable[[OutgoingCall, int, str], Any] | None = field(default=None, repr=False)
 
     @property
     def call_id(self) -> str:
@@ -114,9 +112,7 @@ class OutgoingCall:
             if not done:
                 raise TimeoutError(f"No response within {timeout}s")
             if self._rejected.is_set():
-                raise RuntimeError(
-                    f"Call rejected: {self._reject_code} {self._reject_reason}"
-                )
+                raise RuntimeError(f"Call rejected: {self._reject_code} {self._reject_reason}")
         finally:
             answered.cancel()
             rejected.cancel()
@@ -235,9 +231,7 @@ class SipUAC:
         invite.headers.set_single("Call-ID", call_id)
 
         # CSeq
-        invite.headers.set_single(
-            "CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE"))
-        )
+        invite.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE")))
 
         # Max-Forwards
         invite.headers.set_single("Max-Forwards", "70")
@@ -328,11 +322,7 @@ class SipUAC:
             if call.on_answer is not None:
                 call.on_answer(call)
 
-        elif (
-            status in (401, 407)
-            and call._auth is not None
-            and call._auth_attempts == 0
-        ):
+        elif status in (401, 407) and call._auth is not None and call._auth_attempts == 0:
             # Auth challenge — retry with credentials
             if self._handle_auth_challenge(call, response, status):
                 return
@@ -343,9 +333,7 @@ class SipUAC:
             call.dialog.terminate()
             call._rejected.set()
 
-            logger.info(
-                "Call rejected: %s (%d %s)", call_id, status, response.reason_phrase
-            )
+            logger.info("Call rejected: %s (%d %s)", call_id, status, response.reason_phrase)
             if call.on_rejected is not None:
                 call.on_rejected(call, status, response.reason_phrase)
 
@@ -359,9 +347,7 @@ class SipUAC:
             call.dialog.terminate()
             call._rejected.set()
 
-            logger.info(
-                "Call rejected: %s (%d %s)", call_id, status, response.reason_phrase
-            )
+            logger.info("Call rejected: %s (%d %s)", call_id, status, response.reason_phrase)
             if call.on_rejected is not None:
                 call.on_rejected(call, status, response.reason_phrase)
 
@@ -564,8 +550,12 @@ class SipUAC:
         assert call._auth is not None  # guaranteed by caller
         digest_uri = call.invite.uri
         digest_response = self._compute_digest(
-            call._auth.username, realm, call._auth.password,
-            "INVITE", digest_uri, nonce,
+            call._auth.username,
+            realm,
+            call._auth.password,
+            "INVITE",
+            digest_uri,
+            nonce,
         )
 
         credentials = AuthCredentials(
@@ -586,7 +576,9 @@ class SipUAC:
 
         logger.info(
             "Retrying INVITE with %s for %s (realm=%s)",
-            auth_header_name, call.call_id, realm,
+            auth_header_name,
+            call.call_id,
+            realm,
         )
         return True
 
@@ -617,9 +609,7 @@ class SipUAC:
         invite.headers.append("Via", stringify_via(via))
 
         # From (same as original)
-        invite.headers.set_single(
-            "From", f"<{call.dialog.local_uri}>;tag={call.dialog.local_tag}"
-        )
+        invite.headers.set_single("From", f"<{call.dialog.local_uri}>;tag={call.dialog.local_tag}")
 
         # To (same as original — no remote tag on retry)
         invite.headers.set_single("To", f"<{call.dialog.remote_uri}>")
@@ -628,9 +618,7 @@ class SipUAC:
         invite.headers.set_single("Call-ID", call.dialog.call_id)
 
         # CSeq — incremented
-        invite.headers.set_single(
-            "CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE"))
-        )
+        invite.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE")))
 
         # Max-Forwards
         invite.headers.set_single("Max-Forwards", "70")
@@ -691,9 +679,7 @@ class SipUAC:
         ack.headers.append("Via", stringify_via(via))
 
         # From (local)
-        ack.headers.set_single(
-            "From", f"<{call.dialog.local_uri}>;tag={call.dialog.local_tag}"
-        )
+        ack.headers.set_single("From", f"<{call.dialog.local_uri}>;tag={call.dialog.local_tag}")
 
         # To (remote — with tag)
         to_val = f"<{call.dialog.remote_uri}>"
@@ -705,9 +691,7 @@ class SipUAC:
         ack.headers.set_single("Call-ID", call.dialog.call_id)
 
         # CSeq — same number as INVITE, method=ACK
-        ack.headers.set_single(
-            "CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="ACK"))
-        )
+        ack.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="ACK")))
 
         # Max-Forwards
         ack.headers.set_single("Max-Forwards", "70")

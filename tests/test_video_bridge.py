@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aiosipua.sdp import SdpMessage, SdpNegotiationError, parse_sdp
+from aiosipua.sdp import SdpNegotiationError, parse_sdp
 from aiosipua.video_bridge import VideoCallSession
 
 # --- Test SDP offers ---

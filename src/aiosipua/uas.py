@@ -307,7 +307,7 @@ class SipUAS:
         dialog = create_dialog_from_request(request)
 
         # Parse SDP offer from body
-        sdp_offer: SdpMessage | None = None
+        sdp_offer = None
         if request.body and request.content_type == "application/sdp":
             sdp_offer = parse_sdp(request.body)
 
