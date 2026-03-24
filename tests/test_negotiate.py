@@ -489,9 +489,7 @@ class TestAdvertisedIp:
 
     def test_no_advertised_ip_uses_local(self) -> None:
         offer = parse_sdp(CARRIER_OFFER_BASIC)
-        answer, _ = negotiate_sdp(
-            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
-        )
+        answer, _ = negotiate_sdp(offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999")
         assert answer.origin.address == "10.0.0.5"
         assert answer.connection.address == "10.0.0.5"
 

@@ -72,7 +72,11 @@ class VideoCallSession(_BaseCallSession):
             raise ValueError("SDP offer has no video RTP address (missing c= or m= video)")
 
         super().__init__(
-            sdp_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt,
+            sdp_ip,
+            rtp_port,
+            rtp_addr,
+            sdp_answer,
+            chosen_pt,
             bind_ip=local_ip if advertised_ip else None,
         )
 

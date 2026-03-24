@@ -148,7 +148,11 @@ class CallSession(_BaseCallSession):
             raise ValueError("SDP offer has no RTP address (missing c= or m= audio)")
 
         super().__init__(
-            sdp_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt,
+            sdp_ip,
+            rtp_port,
+            rtp_addr,
+            sdp_answer,
+            chosen_pt,
             bind_ip=local_ip if advertised_ip else None,
         )
 
