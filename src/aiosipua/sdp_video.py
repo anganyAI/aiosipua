@@ -26,6 +26,7 @@ def negotiate_video_sdp(
     supported_video_codecs: list[str] | None = None,
     session_id: str | None = None,
     session_name: str = "-",
+    advertised_ip: str | None = None,
 ) -> tuple[SdpMessage, int]:
     """Build an SDP answer for the video media line (RFC 3264).
 
@@ -94,7 +95,9 @@ def negotiate_video_sdp(
     )
     answer_media.codecs = _extract_codecs(answer_media)
 
-    answer = _build_sdp_envelope(local_ip, session_id, session_name, [answer_media])
+    answer = _build_sdp_envelope(
+        local_ip, session_id, session_name, [answer_media], advertised_ip=advertised_ip
+    )
     return answer, chosen.payload_type
 
 
@@ -110,6 +113,7 @@ def negotiate_av_sdp(
     ptime: int = 20,
     session_id: str | None = None,
     session_name: str = "-",
+    advertised_ip: str | None = None,
 ) -> tuple[SdpMessage, int, int | None]:
     """Negotiate both audio and video media lines in a single SDP answer.
 
@@ -146,6 +150,7 @@ def negotiate_av_sdp(
         ptime=ptime,
         session_id=session_id,
         session_name=session_name,
+        advertised_ip=advertised_ip,
     )
 
     # Try video (optional)
@@ -159,6 +164,7 @@ def negotiate_av_sdp(
                 supported_video_codecs=supported_video_codecs,
                 session_id=session_id,
                 session_name=session_name,
+                advertised_ip=advertised_ip,
             )
             # Merge video media into audio answer
             video_media = video_answer.video
@@ -178,6 +184,7 @@ def build_video_sdp(
     clock_rate: int = 90000,
     fmtp: str | None = None,
     session_id: str | None = None,
+    advertised_ip: str | None = None,
 ) -> SdpMessage:
     """Build a video-only :class:`SdpMessage` (for outgoing video calls).
 
@@ -189,6 +196,8 @@ def build_video_sdp(
         clock_rate: RTP clock rate (default 90000).
         fmtp: Optional fmtp parameters.
         session_id: SDP session ID.
+        advertised_ip: If set, overrides *local_ip* in SDP ``c=``/``o=``
+            lines for NAT traversal.
     """
     if session_id is None:
         session_id = str(int(time.time()))
@@ -209,4 +218,4 @@ def build_video_sdp(
     )
     media.codecs = _extract_codecs(media)
 
-    return _build_sdp_envelope(local_ip, session_id, "-", [media])
+    return _build_sdp_envelope(local_ip, session_id, "-", [media], advertised_ip=advertised_ip)

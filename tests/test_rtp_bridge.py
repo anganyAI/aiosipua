@@ -353,6 +353,64 @@ class TestCallSessionFullFlow:
         mock_rtp.close.assert_awaited_once()
 
 
+class TestNATTraversal:
+    """Verify advertised_ip separates SDP IP from RTP bind IP."""
+
+    def test_sdp_uses_advertised_ip(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(
+            local_ip="192.168.1.5",
+            rtp_port=30000,
+            offer=offer,
+            advertised_ip="203.0.113.10",
+        )
+        answer = session.sdp_answer
+        assert answer.origin.address == "203.0.113.10"
+        assert answer.connection.address == "203.0.113.10"
+
+    @pytest.mark.asyncio()
+    async def test_rtp_binds_to_local_ip(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(
+            local_ip="192.168.1.5",
+            rtp_port=30000,
+            offer=offer,
+            advertised_ip="203.0.113.10",
+        )
+
+        mock_rtp = MagicMock()
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=mock_rtp)
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["local_addr"] == ("192.168.1.5", 30000)
+
+    def test_no_advertised_ip_backward_compat(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
+        answer = session.sdp_answer
+        assert answer.origin.address == "10.0.0.5"
+        assert answer.connection.address == "10.0.0.5"
+
+    @pytest.mark.asyncio()
+    async def test_no_advertised_ip_rtp_binds_to_local(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
+
+        mock_rtp = MagicMock()
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=mock_rtp)
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["local_addr"] == ("10.0.0.5", 30000)
+
+
 class TestImportAiortp:
     def test_import_missing_raises(self) -> None:
         """_import_aiortp raises ImportError with helpful message when aiortp not installed."""

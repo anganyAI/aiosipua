@@ -42,8 +42,11 @@ class _BaseCallSession:
         remote_addr: tuple[str, int],
         sdp_answer: SdpMessage,
         chosen_pt: int,
+        *,
+        bind_ip: str | None = None,
     ) -> None:
         self._local_ip = local_ip
+        self._bind_ip = bind_ip or local_ip
         self._rtp_port = rtp_port
         self._remote_addr = remote_addr
         self._sdp_answer = sdp_answer
@@ -118,6 +121,7 @@ class CallSession(_BaseCallSession):
         rtp_port: int,
         offer: SdpMessage,
         *,
+        advertised_ip: str | None = None,
         supported_codecs: list[int] | None = None,
         dtmf_payload_type: int = 101,
         ptime: int = 20,
@@ -127,9 +131,10 @@ class CallSession(_BaseCallSession):
         jitter_prefetch: int = 4,
         skip_audio_gaps: bool = False,
     ) -> None:
+        sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
             offer=offer,
-            local_ip=local_ip,
+            local_ip=sdp_ip,
             rtp_port=rtp_port,
             supported_codecs=supported_codecs,
             dtmf_payload_type=dtmf_payload_type,
@@ -142,7 +147,10 @@ class CallSession(_BaseCallSession):
         if rtp_addr is None:
             raise ValueError("SDP offer has no RTP address (missing c= or m= audio)")
 
-        super().__init__(local_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt)
+        super().__init__(
+            sdp_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt,
+            bind_ip=local_ip if advertised_ip else None,
+        )
 
         self._clock_rate: int = 8000
         self._dtmf_payload_type = dtmf_payload_type
@@ -198,7 +206,7 @@ class CallSession(_BaseCallSession):
         self._clock_rate = clock_rate
 
         self._session = await aiortp.RTPSession.create(
-            local_addr=(self._local_ip, self._rtp_port),
+            local_addr=(self._bind_ip, self._rtp_port),
             remote_addr=self._remote_addr,
             payload_type=self._chosen_pt,
             clock_rate=clock_rate,

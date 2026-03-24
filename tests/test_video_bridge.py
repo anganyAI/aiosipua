@@ -237,3 +237,46 @@ class TestVideoCallSessionWithMockedAiortp:
             await session.close()
 
         mock_video.close.assert_awaited_once()
+
+
+class TestVideoNATTraversal:
+    """Verify advertised_ip separates SDP IP from RTP bind IP for video."""
+
+    def test_sdp_uses_advertised_ip(self) -> None:
+        offer = parse_sdp(VIDEO_SDP)
+        session = VideoCallSession(
+            local_ip="192.168.1.5",
+            rtp_port=30002,
+            offer=offer,
+            advertised_ip="203.0.113.10",
+        )
+        answer = session.sdp_answer
+        assert answer.origin.address == "203.0.113.10"
+        assert answer.connection.address == "203.0.113.10"
+
+    @pytest.mark.asyncio()
+    async def test_rtp_binds_to_local_ip(self) -> None:
+        offer = parse_sdp(VIDEO_SDP)
+        session = VideoCallSession(
+            local_ip="192.168.1.5",
+            rtp_port=30002,
+            offer=offer,
+            advertised_ip="203.0.113.10",
+        )
+
+        mock_video = MagicMock()
+        mock_aiortp = MagicMock()
+        mock_aiortp.VideoRTPSession.create = AsyncMock(return_value=mock_video)
+
+        with patch("aiosipua.video_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.VideoRTPSession.create.call_args
+        assert call_kwargs.kwargs["local_addr"] == ("192.168.1.5", 30002)
+
+    def test_no_advertised_ip_backward_compat(self) -> None:
+        offer = parse_sdp(VIDEO_SDP)
+        session = VideoCallSession(local_ip="10.0.0.5", rtp_port=30002, offer=offer)
+        answer = session.sdp_answer
+        assert answer.origin.address == "10.0.0.5"
+        assert answer.connection.address == "10.0.0.5"

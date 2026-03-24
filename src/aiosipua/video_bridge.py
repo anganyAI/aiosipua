@@ -51,14 +51,16 @@ class VideoCallSession(_BaseCallSession):
         rtp_port: int,
         offer: SdpMessage,
         *,
+        advertised_ip: str | None = None,
         supported_video_codecs: list[str] | None = None,
         session_id: str | None = None,
         session_name: str = "-",
         jitter_capacity: int = 128,
     ) -> None:
+        sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_video_sdp(
             offer=offer,
-            local_ip=local_ip,
+            local_ip=sdp_ip,
             video_rtp_port=rtp_port,
             supported_video_codecs=supported_video_codecs,
             session_id=session_id,
@@ -69,7 +71,10 @@ class VideoCallSession(_BaseCallSession):
         if rtp_addr is None:
             raise ValueError("SDP offer has no video RTP address (missing c= or m= video)")
 
-        super().__init__(local_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt)
+        super().__init__(
+            sdp_ip, rtp_port, rtp_addr, sdp_answer, chosen_pt,
+            bind_ip=local_ip if advertised_ip else None,
+        )
 
         self._clock_rate: int = 90000
         self._jitter_capacity = jitter_capacity
@@ -109,7 +114,7 @@ class VideoCallSession(_BaseCallSession):
         self._clock_rate = clock_rate
 
         self._session = await aiortp.VideoRTPSession.create(
-            local_addr=(self._local_ip, self._rtp_port),
+            local_addr=(self._bind_ip, self._rtp_port),
             remote_addr=self._remote_addr,
             payload_type=self._chosen_pt,
             clock_rate=clock_rate,

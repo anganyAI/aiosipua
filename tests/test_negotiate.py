@@ -471,6 +471,45 @@ class TestBuildSdp:
         assert sdp2.rtp_address == ("10.0.0.5", 30000)
 
 
+class TestAdvertisedIp:
+    """Verify advertised_ip overrides local_ip in SDP c=/o= lines."""
+
+    def test_advertised_ip_in_answer(self) -> None:
+        offer = parse_sdp(CARRIER_OFFER_BASIC)
+        answer, chosen_pt = negotiate_sdp(
+            offer,
+            local_ip="192.168.1.5",
+            rtp_port=30000,
+            session_id="99999",
+            advertised_ip="203.0.113.10",
+        )
+        assert answer.origin.address == "203.0.113.10"
+        assert answer.connection.address == "203.0.113.10"
+        assert answer.rtp_address == ("203.0.113.10", 30000)
+
+    def test_no_advertised_ip_uses_local(self) -> None:
+        offer = parse_sdp(CARRIER_OFFER_BASIC)
+        answer, _ = negotiate_sdp(
+            offer, local_ip="10.0.0.5", rtp_port=30000, session_id="99999"
+        )
+        assert answer.origin.address == "10.0.0.5"
+        assert answer.connection.address == "10.0.0.5"
+
+    def test_build_sdp_advertised_ip(self) -> None:
+        from aiosipua.sdp import build_sdp
+
+        sdp = build_sdp(
+            local_ip="192.168.1.5",
+            rtp_port=30000,
+            payload_type=0,
+            codec_name="PCMU",
+            session_id="99999",
+            advertised_ip="203.0.113.10",
+        )
+        assert sdp.origin.address == "203.0.113.10"
+        assert sdp.connection.address == "203.0.113.10"
+
+
 class TestNegotiateAndSerialize:
     def test_full_roundtrip(self) -> None:
         """Negotiate from carrier offer, serialize answer, re-parse."""

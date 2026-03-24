@@ -401,6 +401,7 @@ def build_sdp(
     dtmf_payload_type: int = 101,
     ptime: int = 20,
     session_id: str | None = None,
+    advertised_ip: str | None = None,
 ) -> SdpMessage:
     """Build a complete :class:`SdpMessage` from scratch (for outgoing calls).
 
@@ -413,6 +414,8 @@ def build_sdp(
         dtmf_payload_type: Payload type for telephone-event (default 101).
         ptime: Packetization time in ms (default 20).
         session_id: SDP session ID; auto-generated from timestamp if ``None``.
+        advertised_ip: If set, overrides *local_ip* in SDP ``c=``/``o=``
+            lines for NAT traversal.
     """
     if session_id is None:
         session_id = str(int(time.time()))
@@ -438,7 +441,7 @@ def build_sdp(
     )
     media.codecs = _extract_codecs(media)
 
-    return _build_sdp_envelope(local_ip, session_id, "-", [media])
+    return _build_sdp_envelope(local_ip, session_id, "-", [media], advertised_ip=advertised_ip)
 
 
 # --- SDP envelope helper ---
@@ -449,8 +452,17 @@ def _build_sdp_envelope(
     session_id: str,
     session_name: str,
     media: list[MediaDescription],
+    advertised_ip: str | None = None,
 ) -> SdpMessage:
-    """Build the common SDP envelope (origin, connection, timing)."""
+    """Build the common SDP envelope (origin, connection, timing).
+
+    Args:
+        local_ip: Default IP for ``o=`` and ``c=`` lines.
+        advertised_ip: If set, overrides *local_ip* in ``o=`` and ``c=``
+            lines.  Useful for NAT traversal where the RTP socket binds
+            to a private address but the SDP must advertise a public one.
+    """
+    sdp_ip = advertised_ip or local_ip
     return SdpMessage(
         version=0,
         origin=Origin(
@@ -459,10 +471,10 @@ def _build_sdp_envelope(
             session_version=session_id,
             net_type="IN",
             addr_type="IP4",
-            address=local_ip,
+            address=sdp_ip,
         ),
         session_name=session_name,
-        connection=ConnectionData(net_type="IN", addr_type="IP4", address=local_ip),
+        connection=ConnectionData(net_type="IN", addr_type="IP4", address=sdp_ip),
         timing=TimingField(start_time=0, stop_time=0),
         media=media,
     )
@@ -484,6 +496,7 @@ def negotiate_sdp(
     ptime: int = 20,
     session_id: str | None = None,
     session_name: str = "-",
+    advertised_ip: str | None = None,
 ) -> tuple[SdpMessage, int]:
     """Build an SDP answer from an offer (RFC 3264).
 
@@ -500,6 +513,8 @@ def negotiate_sdp(
         ptime: Default packetization time if not specified in the offer.
         session_id: SDP session ID; auto-generated if ``None``.
         session_name: SDP session name (``s=`` line); defaults to ``"-"``.
+        advertised_ip: If set, overrides *local_ip* in SDP ``c=``/``o=``
+            lines for NAT traversal.
 
     Returns:
         ``(answer_sdp, chosen_payload_type)``
@@ -584,5 +599,7 @@ def negotiate_sdp(
     )
     answer_media.codecs = _extract_codecs(answer_media)
 
-    answer = _build_sdp_envelope(local_ip, session_id, session_name, [answer_media])
+    answer = _build_sdp_envelope(
+        local_ip, session_id, session_name, [answer_media], advertised_ip=advertised_ip
+    )
     return answer, chosen.payload_type
