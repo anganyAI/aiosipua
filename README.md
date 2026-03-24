@@ -28,6 +28,8 @@ SIP stack. Zero runtime dependencies, strict type hints, Python 3.11+.
 - **Transaction matching** — client and server transaction layer
 - **aiortp bridge** — `CallSession` for audio RTP and `VideoCallSession` for
   video RTP, bridging SDP negotiation to media with callbacks
+- **NAT traversal** — `advertised_ip` parameter on SDP functions and bridge
+  sessions to advertise a public IP in SDP while binding RTP to a private address
 - **X-header support** — pass application metadata (room ID, session ID, tenant)
   through SIP headers
 
@@ -201,6 +203,39 @@ session.send_frame(nal_units, timestamp, keyframe=True)
 session.request_keyframe()
 
 await session.close()
+```
+
+### NAT traversal with advertised_ip
+
+When behind NAT, RTP sockets bind to a private IP but the SDP must advertise
+the public IP so the remote peer sends media to the right address:
+
+```python
+from aiosipua.rtp_bridge import CallSession
+
+# Behind NAT: bind RTP on 192.168.1.5, advertise 203.0.113.10 in SDP
+session = CallSession(
+    local_ip="192.168.1.5",           # RTP socket binds here
+    rtp_port=30000,
+    offer=call.sdp_offer,
+    advertised_ip="203.0.113.10",     # SDP c=/o= lines use this
+)
+
+# SDP answer will contain:
+#   c=IN IP4 203.0.113.10
+#   o=... IN IP4 203.0.113.10
+# But the RTP socket listens on 192.168.1.5:30000
+
+# Works the same for build_sdp (outbound offers):
+from aiosipua import build_sdp
+
+sdp = build_sdp(
+    local_ip="192.168.1.5",
+    rtp_port=30000,
+    payload_type=0,
+    codec_name="PCMU",
+    advertised_ip="203.0.113.10",
+)
 ```
 
 ### Backend-initiated actions with the UAC
