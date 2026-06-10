@@ -130,6 +130,7 @@ class CallSession(_BaseCallSession):
         jitter_capacity: int = 16,
         jitter_prefetch: int = 4,
         skip_audio_gaps: bool = False,
+        plc: bool = True,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
@@ -161,6 +162,7 @@ class CallSession(_BaseCallSession):
         self._jitter_capacity = jitter_capacity
         self._jitter_prefetch = jitter_prefetch
         self._skip_audio_gaps = skip_audio_gaps
+        self._plc = plc
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
@@ -218,6 +220,7 @@ class CallSession(_BaseCallSession):
             jitter_capacity=self._jitter_capacity,
             jitter_prefetch=self._jitter_prefetch,
             skip_audio_gaps=self._skip_audio_gaps,
+            plc=self._plc,
         )
 
         # Wire up callbacks
