@@ -131,6 +131,8 @@ class CallSession(_BaseCallSession):
         jitter_prefetch: int = 4,
         skip_audio_gaps: bool = False,
         plc: bool = True,
+        cn: bool = False,
+        cn_payload_type: int = 13,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
@@ -163,6 +165,9 @@ class CallSession(_BaseCallSession):
         self._jitter_prefetch = jitter_prefetch
         self._skip_audio_gaps = skip_audio_gaps
         self._plc = plc
+        # Comfort noise during silence (RFC 3389) — requires aiortp >= 0.6.0
+        self._cn = cn
+        self._cn_payload_type = cn_payload_type
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
@@ -221,6 +226,8 @@ class CallSession(_BaseCallSession):
             jitter_prefetch=self._jitter_prefetch,
             skip_audio_gaps=self._skip_audio_gaps,
             plc=self._plc,
+            cn=self._cn,
+            cn_payload_type=self._cn_payload_type,
         )
 
         # Wire up callbacks

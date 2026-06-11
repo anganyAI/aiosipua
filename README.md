@@ -40,8 +40,9 @@ SIP stack. Zero runtime dependencies, strict type hints, Python 3.11+.
   401/407 retry for INVITE and REGISTER
 - **Dialog management** — RFC 3261 dialog state machine, Record-Route support,
   in-dialog request/response creation
-- **aiortp bridge** — `CallSession` for audio RTP and `VideoCallSession` for
-  video RTP, bridging SDP negotiation to media with callbacks
+- **aiortp bridge** — `CallSession` for audio RTP (jitter buffer, PLC,
+  optional RFC 3389 comfort noise) and `VideoCallSession` for video RTP,
+  bridging SDP negotiation to media with callbacks
 - **NAT traversal** — `advertised_ip` for SDP and `advertised_addr` for
   Via/Contact: bind privately, signal publicly
 - **X-header support** — pass application metadata (room ID, session ID, tenant)

@@ -434,3 +434,39 @@ class TestImportAiortp:
             pytest.raises(ImportError, match="aiortp is required"),
         ):
             _import_aiortp()
+
+
+class TestComfortNoisePassthrough:
+    """cn/cn_payload_type ride through to RTPSession.create (RFC 3389)."""
+
+    @pytest.mark.asyncio()
+    async def test_cn_disabled_by_default(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["cn"] is False
+        assert call_kwargs.kwargs["cn_payload_type"] == 13
+
+    @pytest.mark.asyncio()
+    async def test_cn_enabled_passthrough(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(
+            local_ip="10.0.0.5", rtp_port=30000, offer=offer, cn=True, cn_payload_type=96
+        )
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["cn"] is True
+        assert call_kwargs.kwargs["cn_payload_type"] == 96
