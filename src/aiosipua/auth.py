@@ -110,7 +110,7 @@ def build_credentials(
         params["nc"] = nc
         params["cnonce"] = cnonce
     else:
-        # RFC 2617 legacy mode (no qop in the challenge)
+        # RFC 2617 mode (challenge without qop)
         params["response"] = h(f"{ha1}:{nonce}:{ha2}")
 
     opaque = challenge.params.get("opaque")

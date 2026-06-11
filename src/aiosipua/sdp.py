@@ -57,7 +57,7 @@ class ConnectionData:
 
 @dataclass
 class Bandwidth:
-    """SDP ``b=`` field — THE BUG FIX (missing from sip-parser)."""
+    """SDP ``b=`` field."""
 
     bwtype: str = "AS"
     bandwidth: int = 0
@@ -487,6 +487,14 @@ class SdpNegotiationError(Exception):
     """Raised when SDP offer/answer negotiation fails."""
 
 
+def _first_media_index(offer: SdpMessage, kind: str) -> int | None:
+    """Index of the first ``m=<kind>`` section in *offer*, or ``None``."""
+    for i, m in enumerate(offer.media):
+        if m.media == kind:
+            return i
+    return None
+
+
 def _reject_media(m: MediaDescription) -> MediaDescription:
     """Mirror an offered m-line as rejected: port 0 (RFC 3264 §6)."""
     return MediaDescription(media=m.media, port=0, proto=m.proto, formats=list(m.formats))
@@ -546,11 +554,7 @@ def negotiate_sdp(
         session_id = str(int(time.time()))
 
     # Find the first audio media section in the offer
-    audio_idx: int | None = None
-    for i, m in enumerate(offer.media):
-        if m.media == "audio":
-            audio_idx = i
-            break
+    audio_idx = _first_media_index(offer, "audio")
     if audio_idx is None:
         raise SdpNegotiationError("Offer contains no audio media")
     offer_audio = offer.media[audio_idx]

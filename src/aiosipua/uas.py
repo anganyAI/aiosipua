@@ -129,6 +129,19 @@ class SipUAS:
         elif isinstance(msg, SipResponse) and self.uac is not None:
             self.uac.handle_response(msg, addr)
 
+    def _validate_in_dialog(self, dialog: Dialog, request: SipRequest) -> bool:
+        """Tag and CSeq checks for an in-dialog request (RFC 3261 §12.2.2).
+
+        Sends 481 on a tag mismatch, 500 on a non-increasing CSeq.
+        """
+        if not _dialog_matches(dialog, request):
+            self._send_error(request, 481, "Call/Transaction Does Not Exist")
+            return False
+        if not _remote_cseq_valid(dialog, request):
+            self._send_error(request, 500, "Server Internal Error")
+            return False
+        return True
+
     def _handle_request(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Route an incoming request to the appropriate handler."""
         method = request.method.upper()
@@ -154,11 +167,7 @@ class SipUAS:
         # Check for re-INVITE (existing dialog in UAS)
         existing = self._calls.get(call_id)
         if existing and existing.dialog.state == DialogState.CONFIRMED:
-            if not _dialog_matches(existing.dialog, request):
-                self._send_error(request, 481, "Call/Transaction Does Not Exist")
-                return
-            if not _remote_cseq_valid(existing.dialog, request):
-                self._send_error(request, 500, "Server Internal Error")
+            if not self._validate_in_dialog(existing.dialog, request):
                 return
             # re-INVITE
             existing.invite = request
@@ -172,11 +181,7 @@ class SipUAS:
         # Check for re-INVITE on an outbound call (dialog lives in UAC)
         if self.uac is not None and call_id in self.uac._calls:
             uac_dialog = self.uac._calls[call_id].dialog
-            if not _dialog_matches(uac_dialog, request):
-                self._send_error(request, 481, "Call/Transaction Does Not Exist")
-                return
-            if not _remote_cseq_valid(uac_dialog, request):
-                self._send_error(request, 500, "Server Internal Error")
+            if not self._validate_in_dialog(uac_dialog, request):
                 return
             # Build an IncomingCall wrapper so the re-INVITE handler can
             # send responses (accept/reject) through the same interface.
@@ -252,22 +257,14 @@ class SipUAS:
         call = self._calls.get(call_id)
 
         if call is not None:
-            if not _dialog_matches(call.dialog, request):
-                self._send_error(request, 481, "Call/Transaction Does Not Exist")
-                return
-            if not _remote_cseq_valid(call.dialog, request):
-                self._send_error(request, 500, "Server Internal Error")
+            if not self._validate_in_dialog(call.dialog, request):
                 return
             self._remove_invite_transaction(call.invite)
 
         # Check UAC's calls for outbound dialogs
         if call is None and self.uac is not None and call_id in self.uac._calls:
             uac_dialog = self.uac._calls[call_id].dialog
-            if not _dialog_matches(uac_dialog, request):
-                self._send_error(request, 481, "Call/Transaction Does Not Exist")
-                return
-            if not _remote_cseq_valid(uac_dialog, request):
-                self._send_error(request, 500, "Server Internal Error")
+            if not self._validate_in_dialog(uac_dialog, request):
                 return
             # Build a wrapper so on_bye callback has the same interface
             dialog = create_dialog_from_request(request)
