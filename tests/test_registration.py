@@ -293,3 +293,18 @@ class TestFailure:
         request = reg.register()
         uac.handle_response(_make_response(request, 100, "Trying"), REGISTRAR)
         assert reg.state == RegistrationState.REGISTERING
+
+
+class TestShutdownLifecycle:
+    @pytest.mark.asyncio()
+    async def test_uac_close_cancels_registration_timers(self, fast_timers: None) -> None:
+        transport, uac, reg = _setup(expires=1)
+        request = reg.register()
+        uac.handle_response(_make_response(request, 200, "OK", expires_header=1), REGISTRAR)
+        assert reg._refresh_task is not None
+        assert reg._expiry_task is not None
+
+        uac.close()
+
+        assert reg._refresh_task is None
+        assert reg._expiry_task is None

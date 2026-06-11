@@ -148,6 +148,17 @@ class SipUAC:
         """
         process_response(self, response, addr)
 
+    def close(self) -> None:
+        """Cancel every pending timer owned by this UAC.
+
+        Outgoing-call session timers and registration refresh/expiry tasks
+        would otherwise keep firing against a closed transport.
+        """
+        for call in self._calls.values():
+            call._cancel_session_timer()
+        for registration in self._registrations.values():
+            registration._cancel_timers()
+
     def get_call(self, call_id: str) -> OutgoingCall | None:
         """Look up an outgoing call by Call-ID."""
         return self._calls.get(call_id)

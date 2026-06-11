@@ -152,9 +152,11 @@ class SipUAS:
         await self.transport.start()
 
     async def stop(self) -> None:
-        """Stop the UAS: cancel pending response retransmissions and close the transport."""
+        """Stop the UAS: cancel every pending timer and close the transport."""
         for call in self._calls.values():
             call._stop_retransmissions()
+        if self.uac is not None:
+            self.uac.close()
         await self.transport.stop()
 
     def _on_message(self, msg: SipRequest | SipResponse, addr: tuple[str, int]) -> None:

@@ -396,3 +396,23 @@ class TestUacSessionTimers:
         _answer_invite(transport, uac, call, session_expires=None)
 
         assert call._session_timer is None
+
+
+class TestShutdownLifecycle:
+    @pytest.mark.asyncio()
+    async def test_uas_stop_cancels_uac_session_timers(self, fast_timers: None) -> None:
+        """Stopping the UAS releases the timers of outbound calls too."""
+        transport = FakeTransport()
+        uac = SipUAC(transport)  # type: ignore[arg-type]
+        uas = SipUAS(transport, uac=uac)  # type: ignore[arg-type]
+        transport.on_message = uas._on_message
+
+        call = uac.send_invite(
+            "sip:caller@example.com", "sip:callee@example.com", REMOTE_ADDR, session_expires=1
+        )
+        _answer_invite(transport, uac, call, session_expires="1;refresher=uac")
+        assert call._session_timer is not None
+
+        await uas.stop()
+
+        assert call._session_timer is None
