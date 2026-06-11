@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 def _import_aiortp() -> Any:
     """Lazily import aiortp, raising a clear error if not installed."""
     try:
-        import aiortp  # type: ignore[import-not-found]
+        import aiortp
     except ImportError as exc:
         raise ImportError(
             "aiortp is required for RTP integration. Install it with: pip install aiortp"
