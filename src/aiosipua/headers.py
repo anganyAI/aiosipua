@@ -443,7 +443,7 @@ def parse_address(s: str) -> Address:
             addr_params: list[str] = []
             for part in parts[1:]:
                 stripped = part.strip()
-                key = stripped.split("=", 1)[0].lower()
+                key = stripped.split("=", 1)[0].strip().lower()
                 if key == "tag":
                     addr_params.append(stripped)
                 else:
