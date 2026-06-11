@@ -10,6 +10,8 @@ Two invariants, checked with hypothesis:
 
 from __future__ import annotations
 
+import contextlib
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -35,10 +37,8 @@ def test_parse_bytes_total_and_idempotent(data: bytes) -> None:
 @_SETTINGS
 @given(st.text(max_size=2048))
 def test_parse_text_total(data: str) -> None:
-    try:
+    with contextlib.suppress(ValueError):
         SipMessage.parse(data)
-    except ValueError:
-        pass
 
 
 @_SETTINGS
@@ -56,25 +56,19 @@ def test_parse_sdp_total_and_idempotent(data: str) -> None:
 @_SETTINGS
 @given(st.text(max_size=512))
 def test_parse_via_total(data: str) -> None:
-    try:
+    with contextlib.suppress(ValueError):
         parse_via(data)
-    except ValueError:
-        pass
 
 
 @_SETTINGS
 @given(st.text(max_size=512))
 def test_parse_uri_total(data: str) -> None:
-    try:
+    with contextlib.suppress(ValueError):
         parse_uri(data)
-    except ValueError:
-        pass
 
 
 @_SETTINGS
 @given(st.text(max_size=512))
 def test_parse_address_total(data: str) -> None:
-    try:
+    with contextlib.suppress(ValueError):
         parse_address(data)
-    except ValueError:
-        pass
