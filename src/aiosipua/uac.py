@@ -314,6 +314,43 @@ class SipUAC:
 
         return invite
 
+    def send_update(
+        self,
+        dialog: Dialog,
+        remote_addr: tuple[str, int],
+        *,
+        sdp: SdpMessage | None = None,
+    ) -> SipRequest:
+        """Send an UPDATE within a dialog (RFC 3311) — session refresh or renegotiation.
+
+        Unlike re-INVITE, UPDATE is allowed before the dialog is confirmed
+        (early media renegotiation).
+
+        Args:
+            dialog: The early or confirmed dialog.
+            remote_addr: Address to send the UPDATE to.
+            sdp: Optional SDP offer; omitted for bare refreshes (RFC 4028).
+
+        Returns:
+            The UPDATE request that was sent.
+
+        Raises:
+            ValueError: If the dialog is terminated.
+        """
+        if dialog.state == DialogState.TERMINATED:
+            raise ValueError("Cannot send UPDATE: dialog is terminated")
+
+        addr = self._local_addr()
+        update = dialog.create_request("UPDATE", via_host=addr[0], via_port=addr[1])
+        update.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+
+        if sdp is not None:
+            update.body = serialize_sdp(sdp)
+            update.headers.set_single("Content-Type", "application/sdp")
+
+        self.transport.send(update, remote_addr)
+        return update
+
     def send_cancel(self, call: OutgoingCall) -> SipRequest:
         """Send a CANCEL for a pending INVITE (RFC 3261 §9.1).
 

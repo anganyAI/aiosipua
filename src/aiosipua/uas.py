@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from .dialog import Dialog, DialogState, create_dialog_from_request
 from .incoming_call import IncomingCall
 from .message import SipRequest, SipResponse
-from .sdp import SdpMessage, parse_sdp
+from .sdp import SdpMessage, parse_sdp, serialize_sdp
 from .transaction import TransactionLayer, TransactionState
 from .utils import generate_tag
 
@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 InviteCallback = Callable[["IncomingCall"], Any]
 ByeCallback = Callable[["IncomingCall", SipRequest], Any]
 RequestCallback = Callable[[SipRequest, "tuple[str, int]"], Any]
+# UPDATE handler: returns the SDP answer when the UPDATE carries an offer
+UpdateCallback = Callable[["IncomingCall", SipRequest], "SdpMessage | None"]
+
+_ALLOWED_METHODS = "INVITE, ACK, BYE, CANCEL, OPTIONS, UPDATE"
 
 
 def _dialog_matches(dialog: Dialog, request: SipRequest) -> bool:
@@ -101,10 +105,21 @@ class SipUAS:
         self.on_reinvite: InviteCallback | None = None
         self.on_cancel: RequestCallback | None = None
         self.on_options: RequestCallback | None = None
+        self.on_update: UpdateCallback | None = None
         self.on_ack_timeout: InviteCallback | None = None
 
         # Active calls keyed by call-id
         self._calls: dict[str, IncomingCall] = {}
+
+        # Method dispatch (anything else gets 405)
+        self._handlers: dict[str, Callable[[SipRequest, tuple[str, int]], None]] = {
+            "INVITE": self._handle_invite,
+            "ACK": self._handle_ack,
+            "BYE": self._handle_bye,
+            "CANCEL": self._handle_cancel,
+            "OPTIONS": self._handle_options,
+            "UPDATE": self._handle_update,
+        }
 
     @property
     def active_calls(self) -> dict[str, IncomingCall]:
@@ -153,21 +168,11 @@ class SipUAS:
 
     def _handle_request(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Route an incoming request to the appropriate handler."""
-        method = request.method.upper()
-
-        if method == "INVITE":
-            self._handle_invite(request, addr)
-        elif method == "ACK":
-            self._handle_ack(request, addr)
-        elif method == "BYE":
-            self._handle_bye(request, addr)
-        elif method == "CANCEL":
-            self._handle_cancel(request, addr)
-        elif method == "OPTIONS":
-            self._handle_options(request, addr)
-        else:
-            # Unsupported method — 405
+        handler = self._handlers.get(request.method.upper())
+        if handler is None:
             self._send_error(request, 405, "Method Not Allowed")
+            return
+        handler(request, addr)
 
     def _handle_invite(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming INVITE (new call or re-INVITE)."""
@@ -361,6 +366,44 @@ class SipUAS:
         if self.on_cancel is not None:
             self.on_cancel(request, addr)
 
+    def _handle_update(self, request: SipRequest, addr: tuple[str, int]) -> None:
+        """Handle an in-dialog UPDATE (RFC 3311) — session refresh or renegotiation.
+
+        Bodyless UPDATEs (e.g. RFC 4028 refreshes) get an automatic 200.
+        UPDATEs carrying an SDP offer are answered with the SDP returned by
+        ``on_update``, or rejected with 488 when no handler answers.
+        """
+        call_id = request.call_id or ""
+        call = self._calls.get(call_id)
+
+        # UPDATE on an outbound call's dialog: refresh only (no renegotiation)
+        dialog: Dialog | None = call.dialog if call else None
+        if dialog is None and self.uac is not None:
+            uac_call = self.uac.get_call(call_id)
+            dialog = uac_call.dialog if uac_call else None
+
+        if dialog is None:
+            self._send_error(request, 481, "Call/Transaction Does Not Exist")
+            return
+        if not self._validate_in_dialog(dialog, request):
+            return
+
+        has_offer = bool(request.body) and request.content_type == "application/sdp"
+        sdp_answer: SdpMessage | None = None
+        if call is not None and self.on_update is not None:
+            sdp_answer = self.on_update(call, request)
+
+        if has_offer and sdp_answer is None:
+            resp = dialog.create_response(request, 488, "Not Acceptable Here")
+        else:
+            resp = dialog.create_response(request, 200, "OK")
+            if sdp_answer is not None:
+                resp.body = serialize_sdp(sdp_answer)
+                resp.headers.set_single("Content-Type", "application/sdp")
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
+        self.transport.send_reply(resp)
+
     def _remove_invite_transaction(self, invite: SipRequest) -> None:
         """Drop the server transaction tracked for *invite*, if any."""
         vias = invite.via
@@ -403,7 +446,7 @@ class SipUAS:
         if cseq:
             resp.headers.set_single("CSeq", cseq)
 
-        resp.headers.set_single("Allow", "INVITE, ACK, BYE, CANCEL, OPTIONS")
+        resp.headers.set_single("Allow", _ALLOWED_METHODS)
         if self.user_agent:
             resp.headers.set_single("User-Agent", self.user_agent)
 
