@@ -28,6 +28,18 @@ from .headers import (
 
 logger = logging.getLogger(__name__)
 
+# Hard cap on header count per message — beyond this is hostile input
+MAX_HEADERS = 256
+
+# Mandatory request headers (RFC 3261 §8.1.1); Max-Forwards excluded on
+# purpose — established UAs routinely omit it on in-dialog requests
+REQUIRED_REQUEST_HEADERS = ("via", "from", "to", "call-id", "cseq")
+
+
+def missing_required_headers(request: SipRequest) -> list[str]:
+    """Names of mandatory headers absent from the request (RFC 3261 §8.1.1)."""
+    return [name for name in REQUIRED_REQUEST_HEADERS if not request.headers.get(name)]
+
 
 def _split_multi_value(s: str) -> list[str]:
     """Split a header value on commas, respecting angle brackets and quotes.
@@ -131,6 +143,9 @@ class SipMessage:
                 header_lines[-1] += " " + line.strip()
             else:
                 header_lines.append(line)
+
+        if len(header_lines) > MAX_HEADERS:
+            raise ValueError(f"Too many headers ({len(header_lines)} > {MAX_HEADERS})")
 
         # Parse headers
         headers = CaseInsensitiveDict()

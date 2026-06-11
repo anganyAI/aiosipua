@@ -117,8 +117,23 @@ MULTI_INSTANCE_HEADERS: frozenset[str] = frozenset(
 # --- Case-insensitive header dict ---
 
 
+def _check_header_safety(name: str, value: str) -> None:
+    """Reject header injection at the API boundary (CWE-93).
+
+    Application data fed into ``set_single``/``append`` must never smuggle
+    extra header lines into the serialized message.
+    """
+    if "\r" in name or "\n" in name or ":" in name:
+        raise ValueError(f"Invalid header name: {name!r}")
+    if "\r" in value or "\n" in value:
+        raise ValueError(f"Header value for {name} contains line breaks")
+
+
 class CaseInsensitiveDict:
-    """Case-insensitive dict for SIP headers, preserving original casing."""
+    """Case-insensitive dict for SIP headers, preserving original casing.
+
+    Setters reject names/values containing line breaks (header injection).
+    """
 
     def __init__(self) -> None:
         self._store: dict[str, list[str]] = {}
@@ -139,13 +154,23 @@ class CaseInsensitiveDict:
         return default
 
     def set_single(self, name: str, value: str) -> None:
-        """Set a header to exactly one value, replacing any existing values."""
+        """Set a header to exactly one value, replacing any existing values.
+
+        Raises:
+            ValueError: If the name or value would inject header lines.
+        """
+        _check_header_safety(name, value)
         key = self._key(name)
         self._store[key] = [value]
         self._original[key] = name
 
     def append(self, name: str, value: str) -> None:
-        """Append a value to a header (creates if absent)."""
+        """Append a value to a header (creates if absent).
+
+        Raises:
+            ValueError: If the name or value would inject header lines.
+        """
+        _check_header_safety(name, value)
         key = self._key(name)
         if key not in self._store:
             self._store[key] = []

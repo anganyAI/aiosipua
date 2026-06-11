@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 # Type alias for the message callback: (message, sender_addr)
 MessageCallback = Callable[[SipRequest | SipResponse, tuple[str, int]], None]
 
+# Stream caps — a TCP peer exceeding these is hostile, the connection is dropped
+MAX_HEADER_BYTES = 64 * 1024
+MAX_BODY_BYTES = 1024 * 1024
+
 
 def _stamp_via_received(request: SipRequest, addr: tuple[str, int]) -> None:
     """Record the actual source address in the topmost Via (RFC 3261 §18.2.1, RFC 3581).
@@ -213,7 +217,7 @@ class TcpSipTransport(SipTransport):
                 if data is None:
                     break
                 self._dispatch(data, addr)
-        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionError):
+        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionError, ValueError):
             pass
         finally:
             self._connections.pop(addr, None)
@@ -267,7 +271,7 @@ class TcpSipTransport(SipTransport):
                 if data is None:
                     break
                 self._dispatch(data, addr)
-        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionError):
+        except (asyncio.IncompleteReadError, ConnectionResetError, ConnectionError, ValueError):
             pass
         finally:
             self._connections.pop(addr, None)
@@ -302,6 +306,11 @@ async def _read_sip_message(reader: asyncio.StreamReader) -> bytes | None:
         if not line:
             return None  # EOF
         header_buf.extend(line)
+        if len(header_buf) > MAX_HEADER_BYTES:
+            logger.warning(
+                "TCP peer exceeded %d header bytes — dropping connection", MAX_HEADER_BYTES
+            )
+            return None
         # Detect end of headers: \r\n\r\n
         if header_buf.endswith(b"\r\n\r\n"):
             break
@@ -316,6 +325,14 @@ async def _read_sip_message(reader: asyncio.StreamReader) -> bytes | None:
             with contextlib.suppress(ValueError):
                 content_length = int(val.strip())
             break
+
+    if content_length > MAX_BODY_BYTES:
+        logger.warning(
+            "TCP peer declared a %d-byte body (max %d) — dropping connection",
+            content_length,
+            MAX_BODY_BYTES,
+        )
+        return None
 
     # Read body
     if content_length > 0:

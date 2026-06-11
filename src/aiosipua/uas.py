@@ -21,7 +21,7 @@ from .dialog import (
     remote_cseq_valid,
 )
 from .incoming_call import IncomingCall
-from .message import SipRequest, SipResponse
+from .message import SipRequest, SipResponse, missing_required_headers
 from .refer import handle_notify, handle_refer
 from .sdp import SdpMessage, parse_sdp
 from .session_timer import (
@@ -181,7 +181,23 @@ class SipUAS:
         return True
 
     def _handle_request(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Route an incoming request to the appropriate handler."""
+        """Route an incoming request to the appropriate handler.
+
+        Requests missing mandatory headers (RFC 3261 §8.1.1) get a 400 when
+        a Via allows routing the answer, and are dropped otherwise.
+        """
+        missing = missing_required_headers(request)
+        if missing:
+            logger.warning(
+                "Request %r from %s missing required headers: %s",
+                request.method,
+                addr,
+                ", ".join(missing),
+            )
+            if "via" not in missing:
+                self._send_error(request, 400, "Missing Required Header")
+            return
+
         handler = self._handlers.get(request.method.upper())
         if handler is None:
             self._send_error(request, 405, "Method Not Allowed")
