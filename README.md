@@ -299,7 +299,7 @@ call = uac.send_invite(
     from_uri="sip:alice@example.com",
     to_uri="sip:bob@example.com",
     remote_addr=("proxy.example.com", 5060),
-    sdp=sdp,
+    sdp_offer=sdp,
     auth=auth,  # auto-retries on 401/407
 )
 ```
@@ -350,7 +350,7 @@ request = SipRequest(method="OPTIONS", uri="sip:bob@example.com")
 request.headers.set_single("Via", f"SIP/2.0/UDP 10.0.0.1:5060;branch={generate_branch()}")
 request.headers.set_single("From", f"<sip:alice@example.com>;tag={generate_tag()}")
 request.headers.set_single("To", "<sip:bob@example.com>")
-request.headers.set_single("Call-ID", generate_call_id())
+request.headers.set_single("Call-ID", generate_call_id("example.com"))
 request.headers.set_single("CSeq", "1 OPTIONS")
 
 # Serialize to bytes for the wire
@@ -401,11 +401,15 @@ asyncio.run(main())
 ## Architecture
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌────────────┐
-│  SipUAS     │────▶│  Dialog      │────▶│  SipUAC    │
-│  (incoming) │     │  (state mgr) │     │  (outgoing)│
-└──────┬──────┘     └──────────────┘     └─────┬──────┘
+┌─────────────┐     ┌──────────────┐     ┌────────────┐     ┌──────────────┐
+│  SipUAS     │────▶│  Dialog      │────▶│  SipUAC    │────▶│ Registration │
+│  (incoming) │     │  (state mgr) │     │  (outgoing)│     │ (REGISTER)   │
+└──────┬──────┘     └──────────────┘     └─────┬──────┘     └──────────────┘
        │                                       │
+       │    ┌───────────────┐   ┌──────────┐   │
+       ├───▶│ SessionTimer  │   │  REFER / │◀──┤
+       │    │  (RFC 4028)   │   │  NOTIFY  │   │
+       │    └───────────────┘   └──────────┘   │
        ▼                                       ▼
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │  Transaction │    │  SDP/Codec   │    │  CallSession │
@@ -430,6 +434,7 @@ See the [`examples/`](examples/) directory:
 
 - **`echo_server.py`** — Receives audio via RTP and echoes it back
 - **`dtmf_ivr.py`** — Collects DTMF digits and hangs up on `#`
+- **`lossy_caller.py`** — Dials an agent with controlled RTP packet loss
 - **`roomkit_prototype.py`** — Voice AI backend integration with X-header metadata
 
 ## License
