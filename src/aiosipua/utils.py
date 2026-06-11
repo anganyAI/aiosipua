@@ -19,3 +19,10 @@ def generate_branch() -> str:
 def generate_tag() -> str:
     """Generate a random tag for From/To headers."""
     return os.urandom(8).hex()
+
+
+def format_addr(host: str, port: int) -> str:
+    """``host:port`` for URIs and Via sent-by, bracketing IPv6 literals."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]:{port}"
+    return f"{host}:{port}"

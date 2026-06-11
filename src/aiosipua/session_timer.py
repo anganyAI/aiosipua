@@ -29,6 +29,8 @@ if TYPE_CHECKING:
 
     from .incoming_call import IncomingCall
 
+from .utils import format_addr
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SESSION_EXPIRES = 1800
@@ -116,6 +118,6 @@ def send_session_refresh(call: IncomingCall) -> None:
         return
     addr = call._signaling_addr()
     update = call.dialog.create_request("UPDATE", via_host=addr[0], via_port=addr[1])
-    update.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+    update.headers.set_single("Contact", f"<sip:{format_addr(*addr)}>")
     update.headers.set_single("Session-Expires", f"{call.session_interval};refresher=uas")
     call.transport.send(update, call.source_addr)

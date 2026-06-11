@@ -387,12 +387,19 @@ def parse_uri(s: str) -> SipUri:
     return uri
 
 
+def _bracket_ipv6(host: str) -> str:
+    """Bracket a bare IPv6 literal for URI/Via serialization (RFC 3261 §19.1.1)."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def stringify_uri(uri: SipUri) -> str:
     """Serialize a :class:`SipUri` back to string form."""
     s = f"{uri.scheme}:"
     if uri.user is not None:
         s += f"{uri.user}@"
-    s += uri.host
+    s += _bracket_ipv6(uri.host)
     if uri.port is not None:
         s += f":{uri.port}"
     for key, val in uri.params.items():
@@ -530,7 +537,7 @@ def parse_via(s: str) -> Via:
 
 def stringify_via(via: Via) -> str:
     """Serialize a :class:`Via` back to string form."""
-    s = f"{via.protocol}/{via.transport} {via.host}"
+    s = f"{via.protocol}/{via.transport} {_bracket_ipv6(via.host)}"
     if via.port is not None:
         s += f":{via.port}"
     for key, val in via.params.items():

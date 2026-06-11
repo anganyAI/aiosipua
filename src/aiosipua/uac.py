@@ -19,7 +19,7 @@ from .outgoing_call import OutgoingCall
 from .sdp import SdpMessage, serialize_sdp
 from .transaction import TransactionLayer
 from .uac_responses import apply_session_headers, process_response
-from .utils import generate_branch, generate_call_id, generate_tag
+from .utils import format_addr, generate_branch, generate_call_id, generate_tag
 
 if TYPE_CHECKING:
     from .auth import SipDigestAuth
@@ -400,7 +400,7 @@ class SipUAC:
         addr = self._local_addr()
         request = dialog.create_request(method, via_host=addr[0], via_port=addr[1])
         if contact:
-            request.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+            request.headers.set_single("Contact", f"<sip:{format_addr(*addr)}>")
         if body:
             request.text = body
             request.headers.set_single("Content-Type", content_type)
@@ -439,7 +439,7 @@ class SipUAC:
             "CSeq", stringify_cseq(CSeqObj(seq=dialog.next_cseq(), method="INVITE"))
         )
         invite.headers.set_single("Max-Forwards", "70")
-        invite.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+        invite.headers.set_single("Contact", f"<sip:{format_addr(*addr)}>")
         invite.headers.set_single("Supported", "100rel")
 
         if sdp_offer is not None:

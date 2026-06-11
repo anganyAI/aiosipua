@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from .auth import answer_challenge
 from .headers import CSeq, Via, parse_uri, stringify_cseq, stringify_via
 from .message import SipRequest
-from .utils import generate_branch, generate_call_id, generate_tag
+from .utils import format_addr, generate_branch, generate_call_id, generate_tag
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -95,7 +95,7 @@ class Registration:
         addr = uac._local_addr()
         aor_uri = parse_uri(aor)
         userpart = f"{aor_uri.user}@" if aor_uri.user else ""
-        self.contact_uri = contact_uri or f"sip:{userpart}{addr[0]}:{addr[1]}"
+        self.contact_uri = contact_uri or f"sip:{userpart}{format_addr(*addr)}"
         self.registrar_uri = registrar_uri or f"sip:{aor_uri.host}"
 
         self.call_id = generate_call_id(addr[0])

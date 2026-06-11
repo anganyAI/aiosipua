@@ -470,6 +470,7 @@ def _build_sdp_envelope(
             to a private address but the SDP must advertise a public one.
     """
     sdp_ip = advertised_ip or local_ip
+    addr_type = "IP6" if ":" in sdp_ip else "IP4"
     return SdpMessage(
         version=0,
         origin=Origin(
@@ -477,11 +478,11 @@ def _build_sdp_envelope(
             session_id=session_id,
             session_version=session_id,
             net_type="IN",
-            addr_type="IP4",
+            addr_type=addr_type,
             address=sdp_ip,
         ),
         session_name=session_name,
-        connection=ConnectionData(net_type="IN", addr_type="IP4", address=sdp_ip),
+        connection=ConnectionData(net_type="IN", addr_type=addr_type, address=sdp_ip),
         timing=TimingField(start_time=0, stop_time=0),
         media=media,
     )

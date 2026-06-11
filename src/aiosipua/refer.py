@@ -19,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .headers import parse_address, stringify_uri
+from .utils import format_addr
 
 if TYPE_CHECKING:
     from .incoming_call import IncomingCall
@@ -118,7 +119,7 @@ def notify_refer(
     notify.headers.set_single(
         "Subscription-State", "terminated;reason=noresource" if final else "active;expires=60"
     )
-    notify.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+    notify.headers.set_single("Contact", f"<sip:{format_addr(*addr)}>")
     notify.headers.set_single("Content-Type", "message/sipfrag;version=2.0")
     notify.text = f"SIP/2.0 {status_code} {reason}\r\n"
 

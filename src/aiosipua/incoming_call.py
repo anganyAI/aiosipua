@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from . import transaction as _timers
 from .dialog import DialogState, _default_reason
 from .sdp import serialize_sdp
+from .utils import format_addr
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -247,7 +248,7 @@ class IncomingCall:
         contact: str | None = None
         if self.transport is not None:
             addr = self._signaling_addr()
-            contact = f"<sip:{addr[0]}:{addr[1]}>"
+            contact = f"<sip:{format_addr(*addr)}>"
 
         resp = self.dialog.create_response(
             self.invite,
