@@ -135,6 +135,7 @@ class CallSession(_BaseCallSession):
         cn_payload_type: int = 13,
         playout: bool = False,
         playout_max_delay_ms: int = 200,
+        duplicate_tx: bool = False,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
@@ -175,6 +176,8 @@ class CallSession(_BaseCallSession):
         # jitter_prefetch only applies when this is off.
         self._playout = playout
         self._playout_max_delay_ms = playout_max_delay_ms
+        # TX redundancy for degraded links (requires aiortp >= 0.7.0)
+        self._duplicate_tx = duplicate_tx
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
@@ -237,6 +240,7 @@ class CallSession(_BaseCallSession):
             cn_payload_type=self._cn_payload_type,
             playout=self._playout,
             playout_max_delay_ms=self._playout_max_delay_ms,
+            duplicate_tx=self._duplicate_tx,
         )
 
         # Wire up callbacks
