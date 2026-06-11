@@ -165,7 +165,7 @@ def handle_update(uas: SipUAS, request: SipRequest, addr: tuple[str, int]) -> No
     else:
         resp = dialog.create_response(request, 200, "OK")
         if sdp_answer is not None:
-            resp.body = serialize_sdp(sdp_answer)
+            resp.text = serialize_sdp(sdp_answer)
             resp.headers.set_single("Content-Type", "application/sdp")
         session_refreshed(uas, call_id, call)
     if uas.user_agent:

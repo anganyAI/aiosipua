@@ -85,7 +85,7 @@ def handle_notify(uas: SipUAS, request: SipRequest, addr: tuple[str, int]) -> No
         resp.headers.set_single("User-Agent", uas.user_agent)
     uas.transport.send_reply(resp)
 
-    status, reason = _parse_sipfrag(request.body)
+    status, reason = _parse_sipfrag(request.text)
     if status and uas.on_transfer_progress is not None:
         uas.on_transfer_progress(call_id, status, reason)
 
@@ -120,7 +120,7 @@ def notify_refer(
     )
     notify.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
     notify.headers.set_single("Content-Type", "message/sipfrag;version=2.0")
-    notify.body = f"SIP/2.0 {status_code} {reason}\r\n"
+    notify.text = f"SIP/2.0 {status_code} {reason}\r\n"
 
     if call.transport is None:
         return None

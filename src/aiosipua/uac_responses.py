@@ -74,7 +74,7 @@ def process_response(uac: SipUAC, response: SipResponse, addr: tuple[str, int]) 
 
         # Parse SDP answer
         if response.body and response.content_type == "application/sdp":
-            call.sdp_answer = parse_sdp(response.body)
+            call.sdp_answer = parse_sdp(response.text)
 
         first_answer = not call._answered.is_set()
         call.dialog.confirm()

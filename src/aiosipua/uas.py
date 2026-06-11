@@ -213,7 +213,7 @@ class SipUAS:
         dialog.confirm()  # outbound dialog is already confirmed
         sdp_offer: SdpMessage | None = None
         if request.body and request.content_type == "application/sdp":
-            sdp_offer = parse_sdp(request.body)
+            sdp_offer = parse_sdp(request.text)
         wrapper = IncomingCall(
             dialog=dialog,
             invite=request,
@@ -239,7 +239,7 @@ class SipUAS:
             existing.invite = request
             # Re-parse SDP if present
             if request.body and request.content_type == "application/sdp":
-                existing.sdp_offer = parse_sdp(request.body)
+                existing.sdp_offer = parse_sdp(request.text)
             session_refreshed(self, call_id, existing)
             if self.on_reinvite is not None:
                 self.on_reinvite(existing)
@@ -293,7 +293,7 @@ class SipUAS:
         # Parse SDP offer from body
         sdp_offer = None
         if request.body and request.content_type == "application/sdp":
-            sdp_offer = parse_sdp(request.body)
+            sdp_offer = parse_sdp(request.text)
 
         call = IncomingCall(
             dialog=dialog,

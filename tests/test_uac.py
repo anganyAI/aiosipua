@@ -31,7 +31,7 @@ INVITE_WITH_SDP = (
     "Contact: <sip:alice@10.0.0.1:5060>\r\n"
     "Max-Forwards: 70\r\n"
     "Content-Type: application/sdp\r\n"
-    "Content-Length: 117\r\n"
+    "Content-Length: 162\r\n"
     "\r\n"
     "v=0\r\n"
     "o=- 1234 1234 IN IP4 10.0.0.1\r\n"
@@ -234,9 +234,9 @@ class TestSendReinvite:
         invite = uac.send_reinvite(call.dialog, sdp, REMOTE_ADDR)
 
         assert invite.content_type == "application/sdp"
-        assert invite.body != ""
+        assert invite.body != b""
         # Parse the SDP back and verify
-        parsed = parse_sdp(invite.body)
+        parsed = parse_sdp(invite.text)
         assert parsed.audio is not None
         assert parsed.audio.port == 30000
 
@@ -292,7 +292,7 @@ class TestSendReinvite:
         audio.attributes["sendonly"] = []
 
         invite = uac.send_reinvite(call.dialog, sdp, REMOTE_ADDR)
-        parsed = parse_sdp(invite.body)
+        parsed = parse_sdp(invite.text)
         assert parsed.audio is not None
         assert parsed.audio.direction == "sendonly"
 
@@ -405,7 +405,7 @@ class TestSendInfo:
         )
 
         assert info.content_type == "application/dtmf-relay"
-        assert "Signal=1" in info.body
+        assert "Signal=1" in info.text
 
     def test_info_requires_confirmed(self) -> None:
         transport = FakeTransport()
@@ -575,11 +575,11 @@ class TestSendInvite:
         )
 
         assert call.invite.content_type == "application/sdp"
-        assert call.invite.body != ""
+        assert call.invite.body != b""
         assert call.sdp_offer is sdp
 
         # Verify SDP is parseable
-        parsed = parse_sdp(call.invite.body)
+        parsed = parse_sdp(call.invite.text)
         assert parsed.audio is not None
         assert parsed.audio.port == 30000
 
@@ -589,7 +589,7 @@ class TestSendInvite:
 
         call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
 
-        assert call.invite.body == ""
+        assert call.invite.body == b""
         assert call.sdp_offer is None
 
     def test_send_invite_extra_headers(self) -> None:
@@ -1397,10 +1397,10 @@ class TestDigestAuth:
         retry_msg = transport.sent[0][0]
         assert isinstance(retry_msg, SipRequest)
         assert retry_msg.content_type == "application/sdp"
-        assert retry_msg.body != ""
+        assert retry_msg.body != b""
 
         # Parse and verify SDP preserved
-        parsed = parse_sdp(retry_msg.body)
+        parsed = parse_sdp(retry_msg.text)
         assert parsed.audio is not None
         assert parsed.audio.port == 30000
 

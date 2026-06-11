@@ -21,7 +21,7 @@ INVITE_WITH_SDP = (
     "CSeq: 314159 INVITE\r\n"
     "Contact: <sip:alice@pc33.atlanta.example.com>\r\n"
     "Content-Type: application/sdp\r\n"
-    "Content-Length: 147\r\n"
+    "Content-Length: 152\r\n"
     "\r\n"
     "v=0\r\n"
     "o=alice 2890844526 2890844526 IN IP4 pc33.atlanta.example.com\r\n"
@@ -88,7 +88,7 @@ class TestInviteRoundtrip:
 
     def test_body_preserved(self) -> None:
         msg = SipMessage.parse(INVITE_WITH_SDP)
-        assert msg.body.startswith("v=0")
+        assert msg.text.startswith("v=0")
         serialized = msg.serialize()
         msg2 = SipMessage.parse(serialized)
         assert msg2.body == msg.body
@@ -108,7 +108,7 @@ class TestResponseWithSdpRoundtrip:
         assert msg2.body == msg1.body
 
         # Verify SDP is parseable from roundtripped body
-        sdp = parse_sdp(msg2.body)
+        sdp = parse_sdp(msg2.text)
         assert len(sdp.media) == 1
         assert sdp.media[0].port == 49172
 
@@ -161,7 +161,7 @@ class TestSdpInSipRoundtrip:
         assert isinstance(msg, SipRequest)
 
         # Extract SDP
-        sdp = parse_sdp(msg.body)
+        sdp = parse_sdp(msg.text)
         assert sdp.media[0].port == 49170
 
         # Modify SDP
@@ -170,7 +170,7 @@ class TestSdpInSipRoundtrip:
         sdp.connection.address = "10.0.0.1"
 
         # Rebuild SDP and replace body
-        msg.body = serialize_sdp(sdp)
+        msg.text = serialize_sdp(sdp)
         msg.content_type = "application/sdp"
 
         # Serialize full message
@@ -178,11 +178,11 @@ class TestSdpInSipRoundtrip:
 
         # Re-parse and verify
         msg2 = SipMessage.parse(serialized)
-        sdp2 = parse_sdp(msg2.body)
+        sdp2 = parse_sdp(msg2.text)
         assert sdp2.media[0].port == 30000
         assert sdp2.connection is not None
         assert sdp2.connection.address == "10.0.0.1"
 
         # Content-Length should match actual body
-        body_bytes = msg2.body.encode("utf-8")
+        body_bytes = msg2.body
         assert msg2.content_length == len(body_bytes)

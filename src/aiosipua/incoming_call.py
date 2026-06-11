@@ -257,7 +257,7 @@ class IncomingCall:
         )
 
         if body:
-            resp.body = body
+            resp.text = body
         if content_type:
             resp.headers.set_single("Content-Type", content_type)
         if self.user_agent:

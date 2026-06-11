@@ -129,7 +129,7 @@ class TestUasRefer:
         notify = notifies[0]
         assert notify.get_header("event") == "refer"
         assert "active" in (notify.get_header("subscription-state") or "")
-        assert notify.body.startswith("SIP/2.0 100")
+        assert notify.text.startswith("SIP/2.0 100")
         assert "sipfrag" in (notify.content_type or "")
 
         # Handler got the target URI
@@ -189,7 +189,7 @@ class TestUasRefer:
         notify = notify_refer(call, 200, "OK")
 
         assert notify is not None
-        assert notify.body == "SIP/2.0 200 OK\r\n"
+        assert notify.text == "SIP/2.0 200 OK\r\n"
         assert "terminated" in (notify.get_header("subscription-state") or "")
 
     def test_notify_refer_progress(self) -> None:
@@ -199,7 +199,7 @@ class TestUasRefer:
         notify = notify_refer(call, 180)
 
         assert notify is not None
-        assert notify.body == "SIP/2.0 180 Ringing\r\n"
+        assert notify.text == "SIP/2.0 180 Ringing\r\n"
         assert "active" in (notify.get_header("subscription-state") or "")
 
 

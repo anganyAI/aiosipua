@@ -189,9 +189,9 @@ class TestSerialize:
     def test_content_length_auto_set(self) -> None:
         msg = SipMessage.parse(INVITE)
         assert isinstance(msg, SipRequest)
-        msg.body = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n"
+        msg.text = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n"
         serialized = msg.serialize()
-        body_len = len(msg.body.encode("utf-8"))
+        body_len = len(msg.body)
         assert f"Content-Length: {body_len}" in serialized
 
     def test_bytes(self) -> None:
@@ -258,3 +258,53 @@ class TestXHeaders:
         msg.set_header("X-Debug", "false")
         assert msg.get_header("X-Debug") == "false"
         assert len(msg.get_header_values("X-Debug")) == 1
+
+
+class TestBinaryBodies:
+    """Bodies are raw bytes (RFC 3261 §7.4) — binary payloads must survive."""
+
+    def test_binary_body_roundtrip(self) -> None:
+        payload = bytes(range(256))  # includes invalid UTF-8 sequences
+        msg = SipRequest(method="INFO", uri="sip:bob@example.com")
+        msg.headers.set_single("Via", "SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-bin")
+        msg.headers.set_single("Content-Type", "application/octet-stream")
+        msg.body = payload
+
+        reparsed = SipMessage.parse(bytes(msg))
+
+        assert reparsed.body == payload
+        assert reparsed.content_length == 256
+
+    def test_parse_accepts_str(self) -> None:
+        msg = SipMessage.parse("OPTIONS sip:a@b SIP/2.0\r\nVia: SIP/2.0/UDP h\r\n\r\n")
+        assert isinstance(msg, SipRequest)
+        assert msg.body == b""
+
+    def test_text_property_round_trips(self) -> None:
+        msg = SipRequest(method="MESSAGE", uri="sip:a@b")
+        msg.text = "héllo"
+        assert msg.body == "héllo".encode()
+        assert msg.text == "héllo"
+
+    def test_body_trimmed_to_content_length(self) -> None:
+        raw = b"INFO sip:a@b SIP/2.0\r\nContent-Length: 4\r\n\r\n1234TRAILING-GARBAGE"
+        msg = SipMessage.parse(raw)
+        assert msg.body == b"1234"
+
+    def test_short_body_kept(self) -> None:
+        raw = b"INFO sip:a@b SIP/2.0\r\nContent-Length: 100\r\n\r\nshort"
+        msg = SipMessage.parse(raw)
+        assert msg.body == b"short"
+
+    def test_unparseable_content_length_ignored(self) -> None:
+        raw = b"INFO sip:a@b SIP/2.0\r\nContent-Length: abc\r\n\r\nbody"
+        msg = SipMessage.parse(raw)
+        assert msg.body == b"body"
+
+    def test_parse_sdp_rejects_bytes(self) -> None:
+        import pytest
+
+        from aiosipua.sdp import parse_sdp
+
+        with pytest.raises(TypeError, match="message.text"):
+            parse_sdp(b"v=0\r\n")  # type: ignore[arg-type]

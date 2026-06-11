@@ -107,8 +107,7 @@ class SipTransport:
     def _dispatch(self, data: bytes, addr: tuple[str, int]) -> None:
         """Parse raw bytes and dispatch to callback."""
         try:
-            text = data.decode("utf-8", errors="replace")
-            msg = SipMessage.parse(text)
+            msg = SipMessage.parse(data)
             if isinstance(msg, SipRequest):
                 _stamp_via_received(msg, addr)
         except Exception:

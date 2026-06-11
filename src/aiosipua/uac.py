@@ -402,7 +402,7 @@ class SipUAC:
         if contact:
             request.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
         if body:
-            request.body = body
+            request.text = body
             request.headers.set_single("Content-Type", content_type)
         if extra_headers:
             for name, value in extra_headers.items():
@@ -443,7 +443,7 @@ class SipUAC:
         invite.headers.set_single("Supported", "100rel")
 
         if sdp_offer is not None:
-            invite.body = serialize_sdp(sdp_offer)
+            invite.text = serialize_sdp(sdp_offer)
             invite.headers.set_single("Content-Type", "application/sdp")
         if user_agent:
             invite.headers.set_single("User-Agent", user_agent)

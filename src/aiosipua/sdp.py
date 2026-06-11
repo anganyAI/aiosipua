@@ -277,7 +277,14 @@ def _add_attribute(attrs: dict[str, list[str]], line: str) -> None:
 
 
 def parse_sdp(data: str) -> SdpMessage:
-    """Parse an SDP body string into an :class:`SdpMessage`."""
+    """Parse an SDP body string into an :class:`SdpMessage`.
+
+    Raises:
+        TypeError: If *data* is bytes — SIP message bodies are raw bytes,
+            decode first (e.g. ``parse_sdp(message.text)``).
+    """
+    if isinstance(data, bytes | bytearray):
+        raise TypeError("parse_sdp expects text — pass message.text, not message.body")
     sdp = SdpMessage()
     current_media: MediaDescription | None = None
 

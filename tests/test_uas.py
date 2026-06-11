@@ -39,7 +39,7 @@ INVITE_WITH_SDP = (
     "Contact: <sip:alice@10.0.0.1:5060>\r\n"
     "Max-Forwards: 70\r\n"
     "Content-Type: application/sdp\r\n"
-    "Content-Length: 117\r\n"
+    "Content-Length: 162\r\n"
     "\r\n"
     "v=0\r\n"
     "o=- 1234 1234 IN IP4 10.0.0.1\r\n"
@@ -237,7 +237,7 @@ class TestIncomingCallResponses:
         assert isinstance(resp, SipResponse)
         assert resp.status_code == 200
         assert resp.content_type == "application/sdp"
-        assert resp.body != ""
+        assert resp.body != b""
 
     def test_reject(self, call_setup: tuple[IncomingCall, FakeTransport]) -> None:
         call, transport = call_setup
@@ -473,7 +473,7 @@ class TestFullCallFlow:
         resp_200 = transport.sent[-1][0]
         assert isinstance(resp_200, SipResponse)
         assert resp_200.status_code == 200
-        assert resp_200.body != ""
+        assert resp_200.body != b""
         assert call.dialog.state == DialogState.CONFIRMED
 
         local_tag = call.dialog.local_tag

@@ -86,7 +86,7 @@ class TestUacSendUpdate:
         update = uac.send_update(call.dialog, REMOTE_ADDR)
 
         assert update.method == "UPDATE"
-        assert update.body == ""
+        assert update.body == b""
         cseq = update.cseq
         assert cseq is not None
         assert cseq.method == "UPDATE"
@@ -101,7 +101,7 @@ class TestUacSendUpdate:
         update = uac.send_update(call.dialog, REMOTE_ADDR, sdp=sdp)
 
         assert update.content_type == "application/sdp"
-        assert "m=audio 30000" in update.body
+        assert "m=audio 30000" in update.text
 
     def test_update_allowed_in_early_dialog(self) -> None:
         transport = FakeTransport()
@@ -161,7 +161,7 @@ class TestUasUpdate:
         resp = _last_response(transport)
         assert resp.status_code == 200
         assert resp.content_type == "application/sdp"
-        answer = parse_sdp(resp.body)
+        answer = parse_sdp(resp.text)
         assert answer.audio is not None
         assert answer.audio.port == 30000
 

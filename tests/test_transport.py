@@ -330,7 +330,7 @@ class TestTcpLoopback:
             assert len(received) == 1
             msg, _ = received[0]
             assert isinstance(msg, SipRequest)
-            assert msg.body == sdp_body
+            assert msg.text == sdp_body
         finally:
             await client.stop()
             await server.stop()
@@ -410,7 +410,7 @@ class TestReadSipMessage:
         assert data is not None
         msg = SipMessage.parse(data.decode())
         assert isinstance(msg, SipRequest)
-        assert msg.body == body
+        assert msg.text == body
 
     @pytest.mark.asyncio
     async def test_read_eof_returns_none(self) -> None:

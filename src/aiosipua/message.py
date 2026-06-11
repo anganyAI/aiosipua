@@ -1,7 +1,13 @@
-"""SIP message model: parsing, serialization, and structured accessors."""
+"""SIP message model: parsing, serialization, and structured accessors.
+
+Bodies are raw ``bytes`` — SIP bodies are octet streams (RFC 3261 §7.4)
+and may carry non-UTF-8 payloads.  Use :attr:`SipMessage.text` to read or
+write a body as UTF-8 text.
+"""
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from .headers import (
@@ -19,6 +25,8 @@ from .headers import (
     stringify_cseq,
     stringify_via,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _split_multi_value(s: str) -> list[str]:
@@ -54,24 +62,56 @@ def _split_multi_value(s: str) -> list[str]:
     return parts
 
 
+def _reconcile_content_length(headers: CaseInsensitiveDict, body: bytes) -> bytes:
+    """Reconcile the body with the declared Content-Length (RFC 3261 §18.3)."""
+    raw = headers.get_first("content-length")
+    if raw is None:
+        return body
+    try:
+        declared = int(raw.strip())
+    except ValueError:
+        return body
+    if declared < 0:
+        return body
+    if len(body) > declared:
+        logger.warning("Body longer than Content-Length (%d > %d) — trimming", len(body), declared)
+        return body[:declared]
+    if len(body) < declared:
+        logger.warning("Body shorter than Content-Length (%d < %d)", len(body), declared)
+    return body
+
+
 @dataclass
 class SipMessage:
     """Base class for SIP messages."""
 
     headers: CaseInsensitiveDict = field(default_factory=CaseInsensitiveDict)
-    body: str = ""
+    body: bytes = b""
 
     @staticmethod
-    def parse(data: str) -> SipRequest | SipResponse:
-        """Parse a raw SIP message string into a typed message object."""
+    def parse(data: bytes | str) -> SipRequest | SipResponse:
+        """Parse a raw SIP message (wire bytes or text) into a typed message object.
+
+        Headers are decoded as UTF-8 (lossily — they are ASCII on a
+        compliant wire); the body is kept as raw bytes and reconciled with
+        Content-Length (RFC 3261 §18.3): extra bytes are trimmed, a short
+        body is kept but logged.
+
+        Raises:
+            ValueError: If the message cannot be parsed.
+        """
+        raw = data.encode("utf-8") if isinstance(data, str) else data
+
         # Split headers from body, preserving body content as-is
-        if "\r\n\r\n" in data:
-            header_section, _, body = data.partition("\r\n\r\n")
-        elif "\n\n" in data:
-            header_section, _, body = data.partition("\n\n")
+        if b"\r\n\r\n" in raw:
+            header_blob, _, body = raw.partition(b"\r\n\r\n")
+        elif b"\n\n" in raw:
+            header_blob, _, body = raw.partition(b"\n\n")
         else:
-            header_section = data
-            body = ""
+            header_blob = raw
+            body = b""
+
+        header_section = header_blob.decode("utf-8", errors="replace")
 
         # Normalize line endings in header section only
         header_section = header_section.replace("\r\n", "\n").replace("\r", "\n")
@@ -112,6 +152,8 @@ class SipMessage:
             else:
                 headers.append(name, value)
 
+        body = _reconcile_content_length(headers, body)
+
         # Detect request vs response
         if start_line.startswith("SIP/"):
             # Response: "SIP/2.0 200 OK"
@@ -129,31 +171,33 @@ class SipMessage:
             return SipRequest(headers=headers, body=body, method=method, uri=uri)
 
     def serialize(self) -> str:
-        """Serialize the message back to a SIP wire-format string."""
-        lines: list[str] = [self._start_line()]
-
-        # Auto-set Content-Length
-        body_bytes = self.body.encode("utf-8") if self.body else b""
-        self.headers.set_single("Content-Length", str(len(body_bytes)))
-
-        for name, values in self.headers.items():
-            pretty = prettify_header_name(name)
-            for val in values:
-                lines.append(f"{pretty}: {val}")
-
-        lines.append("")
-        result = "\r\n".join(lines)
-        if self.body:
-            result += "\r\n" + self.body
-        else:
-            result += "\r\n"
-        return result
+        """Textual view of the wire format (lossy when the body is binary)."""
+        return bytes(self).decode("utf-8", errors="replace")
 
     def _start_line(self) -> str:
         raise NotImplementedError
 
     def __bytes__(self) -> bytes:
-        return self.serialize().encode("utf-8")
+        """Wire format: headers with an exact Content-Length, then the raw body."""
+        self.headers.set_single("Content-Length", str(len(self.body)))
+
+        lines: list[str] = [self._start_line()]
+        for name, values in self.headers.items():
+            pretty = prettify_header_name(name)
+            for val in values:
+                lines.append(f"{pretty}: {val}")
+        lines.append("")
+        lines.append("")
+        return "\r\n".join(lines).encode("utf-8") + self.body
+
+    @property
+    def text(self) -> str:
+        """The body decoded as UTF-8 (lossily)."""
+        return self.body.decode("utf-8", errors="replace")
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.body = value.encode("utf-8")
 
     # --- Header convenience methods ---
 
