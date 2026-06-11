@@ -37,6 +37,9 @@ from .headers import (
     stringify_uri,
     stringify_via,
 )
+from .incoming_call import (
+    IncomingCall,
+)
 from .message import (
     SipMessage,
     SipRequest,
@@ -79,7 +82,6 @@ from .uac import (
     SipUAC,
 )
 from .uas import (
-    IncomingCall,
     SipUAS,
 )
 from .utils import (
