@@ -241,6 +241,34 @@ def create_dialog_from_request(
     )
 
 
+def dialog_matches(dialog: Dialog, request: SipRequest) -> bool:
+    """Check an in-dialog request's tags against the dialog (RFC 3261 §12.2.2).
+
+    A request claiming an existing Call-ID but carrying the wrong From/To
+    tags does not belong to the dialog and must be answered with 481.
+    """
+    from_addr = request.from_addr
+    to_addr = request.to_addr
+    from_tag = (from_addr.tag if from_addr else None) or ""
+    to_tag = (to_addr.tag if to_addr else None) or ""
+    return from_tag == dialog.remote_tag and to_tag == dialog.local_tag
+
+
+def remote_cseq_valid(dialog: Dialog, request: SipRequest) -> bool:
+    """Validate and record the remote CSeq (RFC 3261 §12.2.2).
+
+    In-dialog requests must carry a CSeq strictly higher than the last one
+    seen; on success the dialog's ``remote_cseq`` is updated.
+    """
+    cseq = request.cseq
+    if cseq is None:
+        return False
+    if dialog.remote_cseq and cseq.seq <= dialog.remote_cseq:
+        return False
+    dialog.remote_cseq = cseq.seq
+    return True
+
+
 def _default_reason(status_code: int) -> str:
     """Return a default reason phrase for common status codes."""
     reasons: dict[int, str] = {

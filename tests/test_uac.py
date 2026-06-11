@@ -6,10 +6,11 @@ import asyncio
 
 import pytest
 
+from aiosipua.auth import SipDigestAuth
 from aiosipua.dialog import Dialog, DialogState
 from aiosipua.message import SipMessage, SipRequest, SipResponse
 from aiosipua.sdp import build_sdp, negotiate_sdp, parse_sdp, serialize_sdp
-from aiosipua.uac import OutgoingCall, SipDigestAuth, SipUAC
+from aiosipua.uac import OutgoingCall, SipUAC
 from aiosipua.uas import IncomingCall, SipUAS
 
 # --- Fake transport ---

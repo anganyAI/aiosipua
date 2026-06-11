@@ -54,6 +54,9 @@ class OutgoingCall:
     _auth: SipDigestAuth | None = field(default=None, init=False, repr=False)
     _auth_attempts: int = field(default=0, init=False, repr=False)
 
+    # Highest RSeq already acknowledged with a PRACK (RFC 3262)
+    _last_pracked_rseq: int = field(default=0, init=False, repr=False)
+
     # Callbacks (optional)
     on_ringing: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
     on_answer: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)

@@ -12,7 +12,13 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from .dialog import Dialog, DialogState, create_dialog_from_request
+from .dialog import (
+    Dialog,
+    DialogState,
+    create_dialog_from_request,
+    dialog_matches,
+    remote_cseq_valid,
+)
 from .incoming_call import IncomingCall
 from .message import SipRequest, SipResponse
 from .sdp import SdpMessage, parse_sdp, serialize_sdp
@@ -32,35 +38,7 @@ RequestCallback = Callable[[SipRequest, "tuple[str, int]"], Any]
 # UPDATE handler: returns the SDP answer when the UPDATE carries an offer
 UpdateCallback = Callable[["IncomingCall", SipRequest], "SdpMessage | None"]
 
-_ALLOWED_METHODS = "INVITE, ACK, BYE, CANCEL, OPTIONS, UPDATE"
-
-
-def _dialog_matches(dialog: Dialog, request: SipRequest) -> bool:
-    """Check an in-dialog request's tags against the dialog (RFC 3261 §12.2.2).
-
-    A request claiming an existing Call-ID but carrying the wrong From/To
-    tags does not belong to the dialog and must be answered with 481.
-    """
-    from_addr = request.from_addr
-    to_addr = request.to_addr
-    from_tag = (from_addr.tag if from_addr else None) or ""
-    to_tag = (to_addr.tag if to_addr else None) or ""
-    return from_tag == dialog.remote_tag and to_tag == dialog.local_tag
-
-
-def _remote_cseq_valid(dialog: Dialog, request: SipRequest) -> bool:
-    """Validate and record the remote CSeq (RFC 3261 §12.2.2).
-
-    In-dialog requests must carry a CSeq strictly higher than the last one
-    seen; on success the dialog's ``remote_cseq`` is updated.
-    """
-    cseq = request.cseq
-    if cseq is None:
-        return False
-    if dialog.remote_cseq and cseq.seq <= dialog.remote_cseq:
-        return False
-    dialog.remote_cseq = cseq.seq
-    return True
+_ALLOWED_METHODS = "INVITE, ACK, PRACK, BYE, CANCEL, OPTIONS, UPDATE"
 
 
 class SipUAS:
@@ -107,6 +85,7 @@ class SipUAS:
         self.on_options: RequestCallback | None = None
         self.on_update: UpdateCallback | None = None
         self.on_ack_timeout: InviteCallback | None = None
+        self.on_prack_timeout: InviteCallback | None = None
 
         # Active calls keyed by call-id
         self._calls: dict[str, IncomingCall] = {}
@@ -115,6 +94,7 @@ class SipUAS:
         self._handlers: dict[str, Callable[[SipRequest, tuple[str, int]], None]] = {
             "INVITE": self._handle_invite,
             "ACK": self._handle_ack,
+            "PRACK": self._handle_prack,
             "BYE": self._handle_bye,
             "CANCEL": self._handle_cancel,
             "OPTIONS": self._handle_options,
@@ -141,9 +121,9 @@ class SipUAS:
         await self.transport.start()
 
     async def stop(self) -> None:
-        """Stop the UAS: cancel pending 2xx retransmissions and close the transport."""
+        """Stop the UAS: cancel pending response retransmissions and close the transport."""
         for call in self._calls.values():
-            call._stop_2xx_retransmission()
+            call._stop_retransmissions()
         await self.transport.stop()
 
     def _on_message(self, msg: SipRequest | SipResponse, addr: tuple[str, int]) -> None:
@@ -158,10 +138,10 @@ class SipUAS:
 
         Sends 481 on a tag mismatch, 500 on a non-increasing CSeq.
         """
-        if not _dialog_matches(dialog, request):
+        if not dialog_matches(dialog, request):
             self._send_error(request, 481, "Call/Transaction Does Not Exist")
             return False
-        if not _remote_cseq_valid(dialog, request):
+        if not remote_cseq_valid(dialog, request):
             self._send_error(request, 500, "Server Internal Error")
             return False
         return True
@@ -246,6 +226,7 @@ class SipUAS:
             advertised_addr=self.advertised_addr,
             retransmit_2xx=self.retransmit_2xx,
             on_ack_timeout=self._dispatch_ack_timeout,
+            on_prack_timeout=self._dispatch_prack_timeout,
         )
 
         self._calls[call_id] = call
@@ -261,7 +242,7 @@ class SipUAS:
         """Handle an incoming ACK (confirms a 2xx, or closes a rejected INVITE)."""
         call_id = request.call_id or ""
         call = self._calls.get(call_id)
-        if call is None or not _dialog_matches(call.dialog, request):
+        if call is None or not dialog_matches(call.dialog, request):
             return
 
         call._stop_2xx_retransmission()
@@ -280,6 +261,33 @@ class SipUAS:
         if self.on_ack_timeout is not None:
             self.on_ack_timeout(call)
 
+    def _dispatch_prack_timeout(self, call: IncomingCall) -> None:
+        """A reliable provisional was never PRACKed — the INVITE was rejected (RFC 3262 §3)."""
+        self._calls.pop(call.call_id, None)
+        logger.warning("No PRACK for reliable 18x on %s — call rejected", call.call_id)
+        if self.on_prack_timeout is not None:
+            self.on_prack_timeout(call)
+
+    def _handle_prack(self, request: SipRequest, addr: tuple[str, int]) -> None:
+        """Handle a PRACK acknowledging a reliable provisional (RFC 3262 §3)."""
+        call_id = request.call_id or ""
+        call = self._calls.get(call_id)
+        if call is None:
+            self._send_error(request, 481, "Call/Transaction Does Not Exist")
+            return
+        if not self._validate_in_dialog(call.dialog, request):
+            return
+
+        rack = request.get_header("rack") or ""
+        if not call._ack_reliable(rack):
+            self._send_error(request, 481, "Call/Transaction Does Not Exist")
+            return
+
+        resp = call.dialog.create_response(request, 200, "OK")
+        if self.user_agent:
+            resp.headers.set_single("User-Agent", self.user_agent)
+        self.transport.send_reply(resp)
+
     def _handle_bye(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming BYE (terminates a call)."""
         call_id = request.call_id or ""
@@ -288,7 +296,7 @@ class SipUAS:
         if call is not None:
             if not self._validate_in_dialog(call.dialog, request):
                 return
-            call._stop_2xx_retransmission()
+            call._stop_retransmissions()
             self._remove_invite_transaction(call.invite)
 
         # Check UAC's calls for outbound dialogs
@@ -355,10 +363,10 @@ class SipUAS:
         self.transport.send_reply(resp)
 
         # Send 487 Request Terminated for the original INVITE
+        call._stop_retransmissions()
         if not call._answered:
             call.reject(487, "Request Terminated")
 
-        call._stop_2xx_retransmission()
         self._calls.pop(call.call_id, None)
         if txn is not None:
             self.transactions.remove(txn)
