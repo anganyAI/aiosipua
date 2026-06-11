@@ -5,14 +5,11 @@ from __future__ import annotations
 import logging
 import time
 
-from .sdp import (
+from .sdp import Codec, MediaDescription, SdpMessage, _extract_codecs
+from .sdp_negotiate import (
     _DIRECTION_ANSWER,
-    Codec,
-    MediaDescription,
-    SdpMessage,
     SdpNegotiationError,
     _build_sdp_envelope,
-    _extract_codecs,
     _first_media_index,
     _mirror_offer_media,
     negotiate_sdp,
