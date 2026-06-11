@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-__version__ = "0.4.1"
+from importlib.metadata import version as _version
+
+__version__ = _version("aiosipua")
 
 from .dialog import (
     Dialog,
