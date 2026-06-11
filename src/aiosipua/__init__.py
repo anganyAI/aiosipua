@@ -45,6 +45,9 @@ from .message import (
     SipRequest,
     SipResponse,
 )
+from .outgoing_call import (
+    OutgoingCall,
+)
 from .rtp_bridge import (
     CallSession,
 )
@@ -78,7 +81,6 @@ from .transport import (
     UdpSipTransport,
 )
 from .uac import (
-    OutgoingCall,
     SipUAC,
 )
 from .uas import (
