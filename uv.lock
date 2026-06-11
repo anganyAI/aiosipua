@@ -4,16 +4,16 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "aiortp"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b2/79/3e303642b6018065741f9f1560fbd5547d8e342a56c5b22838f0180f4729/aiortp-0.6.0.tar.gz", hash = "sha256:8385b9cc952a59f26defd9332eab567af14792f96fe7bb959b7c7853cbe58026", size = 79613, upload-time = "2026-06-11T11:14:52.14Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c4/be/ddecb9d9a1bf61dd7da7c1d2d3c98255303e87944bebd7e0cb1c6f7a44f0/aiortp-0.7.0.tar.gz", hash = "sha256:ed5c95288c05ea08fc805ef8cd45e97be45b598d873e55ee4ffcf09cd3ba1cc7", size = 81387, upload-time = "2026-06-11T14:21:21.376Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/e8/f561fd9c8f74369c9ffef779195e24f2ad45fb249f024123fe6b9130091a/aiortp-0.6.0-py3-none-any.whl", hash = "sha256:c97c933dbe14f28c3d445dbccbd628786d2762084b6e60a2a7dcea169c24b3c1", size = 56183, upload-time = "2026-06-11T11:14:51.128Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/28/2b58cb243d5273216983f76ba7aa632b159c60c6384eb96cba0a69fa77db/aiortp-0.7.0-py3-none-any.whl", hash = "sha256:c45557cb75267a99ab4b2cb3fd2393e513674cc8e6bfa7d77a162cf8c0da50bc", size = 57109, upload-time = "2026-06-11T14:21:20.375Z" },
 ]
 
 [[package]]
 name = "aiosipua"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -31,7 +31,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "aiortp", marker = "extra == 'rtp'", specifier = ">=0.6.0" }]
+requires-dist = [{ name = "aiortp", marker = "extra == 'rtp'", specifier = ">=0.7.0" }]
 provides-extras = ["rtp"]
 
 [package.metadata.requires-dev]
