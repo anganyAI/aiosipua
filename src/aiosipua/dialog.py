@@ -86,12 +86,12 @@ class Dialog:
 
         req = SipRequest(method=method, uri=self.remote_target or self.remote_uri)
 
-        # Via
+        # Via — valueless rport requests symmetric response routing (RFC 3581)
         via = Via(
             transport=via_transport,
             host=via_host,
             port=via_port,
-            params={"branch": branch},
+            params={"branch": branch, "rport": None},
         )
         req.headers.append("Via", stringify_via(via))
 
@@ -187,7 +187,10 @@ def create_dialog_from_request(
         local_uri: Our URI; derived from the To header if ``None``.
     """
     if local_tag is None:
-        local_tag = generate_tag()
+        # In-dialog requests already carry our tag in To — reuse it so
+        # responses don't grow a second tag parameter
+        to_addr_for_tag = request.to_addr
+        local_tag = (to_addr_for_tag.tag if to_addr_for_tag else None) or generate_tag()
 
     # Extract From (remote) info
     from_addr = request.from_addr

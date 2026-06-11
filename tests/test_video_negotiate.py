@@ -278,3 +278,38 @@ class TestBuildVideoSdp:
         assert reparsed.video is not None
         assert reparsed.video.port == 30002
         assert reparsed.video_rtp_address == ("10.0.0.5", 30002)
+
+
+class TestAvMlineMirroring:
+    """RFC 3264 §6 — answers mirror the offer's m-line list."""
+
+    def test_av_answer_keeps_offer_order(self) -> None:
+        offer = parse_sdp(AV_OFFER)
+        answer, audio_pt, video_pt = negotiate_av_sdp(
+            offer, "10.0.0.5", audio_rtp_port=30000, video_rtp_port=30002
+        )
+        assert [m.media for m in answer.media] == ["audio", "video"]
+        assert answer.media[0].port == 30000
+        assert answer.media[1].port == 30002
+        assert video_pt is not None
+
+    def test_unsupported_video_codec_rejected_with_port_zero(self) -> None:
+        offer = parse_sdp(AV_OFFER)
+        answer, audio_pt, video_pt = negotiate_av_sdp(
+            offer,
+            "10.0.0.5",
+            audio_rtp_port=30000,
+            video_rtp_port=30002,
+            supported_video_codecs=["AV1"],  # not offered
+        )
+        assert video_pt is None
+        assert len(answer.media) == 2
+        assert answer.media[1].media == "video"
+        assert answer.media[1].port == 0
+
+    def test_video_only_negotiation_rejects_audio_mline(self) -> None:
+        offer = parse_sdp(AV_OFFER)
+        answer, _ = negotiate_video_sdp(offer, "10.0.0.5", 30002)
+        assert [m.media for m in answer.media] == ["audio", "video"]
+        assert answer.media[0].port == 0
+        assert answer.media[1].port == 30002

@@ -13,6 +13,7 @@ from .sdp import (
     SdpNegotiationError,
     _build_sdp_envelope,
     _extract_codecs,
+    _mirror_offer_media,
     negotiate_sdp,
 )
 
@@ -53,9 +54,14 @@ def negotiate_video_sdp(
     if session_id is None:
         session_id = str(int(time.time()))
 
-    offer_video = offer.video
-    if offer_video is None:
+    video_idx: int | None = None
+    for i, m in enumerate(offer.media):
+        if m.media == "video":
+            video_idx = i
+            break
+    if video_idx is None:
         raise SdpNegotiationError("Offer contains no video media")
+    offer_video = offer.media[video_idx]
 
     # Codec selection: first offered video codec we support
     supported_set = {c.upper() for c in supported_video_codecs}
@@ -98,6 +104,7 @@ def negotiate_video_sdp(
     answer = _build_sdp_envelope(
         local_ip, session_id, session_name, [answer_media], advertised_ip=advertised_ip
     )
+    answer.media = _mirror_offer_media(offer, {video_idx: answer_media})
     return answer, chosen.payload_type
 
 
@@ -166,10 +173,12 @@ def negotiate_av_sdp(
                 session_name=session_name,
                 advertised_ip=advertised_ip,
             )
-            # Merge video media into audio answer
-            video_media = video_answer.video
-            if video_media is not None:
-                audio_answer.media.append(video_media)
+            # Both answers mirror the offer's m-line order (RFC 3264 §6):
+            # swap the rejected video stub for the negotiated video m-line.
+            for i, m in enumerate(offer.media):
+                if m.media == "video":
+                    audio_answer.media[i] = video_answer.media[i]
+                    break
         except SdpNegotiationError:
             logger.debug("Video negotiation failed, answering with audio only")
 

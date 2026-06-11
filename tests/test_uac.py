@@ -324,20 +324,17 @@ class TestSendReinvite:
 
 
 class TestSendCancel:
+    def _make_early_call(self, transport: FakeTransport) -> tuple[SipUAC, OutgoingCall]:
+        uac = SipUAC(transport)  # type: ignore[arg-type]
+        call = uac.send_invite("sip:bob@example.com", "sip:alice@example.com", REMOTE_ADDR)
+        transport.sent.clear()
+        return uac, call
+
     def test_cancel_sends_request(self) -> None:
         transport = FakeTransport()
-        dialog = Dialog(
-            call_id="cancel-test",
-            local_tag="l",
-            remote_tag="r",
-            local_uri="sip:bob@example.com",
-            remote_uri="sip:alice@example.com",
-            remote_target="sip:alice@10.0.0.1:5060",
-            state=DialogState.EARLY,
-        )
+        uac, call = self._make_early_call(transport)
 
-        uac = SipUAC(transport)  # type: ignore[arg-type]
-        cancel = uac.send_cancel(dialog, REMOTE_ADDR)
+        cancel = uac.send_cancel(call)
 
         assert cancel.method == "CANCEL"
         assert len(transport.sent) == 1
@@ -348,52 +345,55 @@ class TestSendCancel:
 
     def test_cancel_terminates_dialog(self) -> None:
         transport = FakeTransport()
-        dialog = Dialog(
-            call_id="cancel-test",
-            local_tag="l",
-            remote_tag="r",
-            local_uri="sip:bob@example.com",
-            remote_uri="sip:alice@example.com",
-            remote_target="sip:alice@10.0.0.1:5060",
-            state=DialogState.EARLY,
-        )
+        uac, call = self._make_early_call(transport)
 
-        uac = SipUAC(transport)  # type: ignore[arg-type]
-        uac.send_cancel(dialog, REMOTE_ADDR)
+        uac.send_cancel(call)
 
-        assert dialog.state == DialogState.TERMINATED
+        assert call.dialog.state == DialogState.TERMINATED
 
     def test_cancel_requires_early_dialog(self) -> None:
         transport = FakeTransport()
-        dialog = Dialog(
-            call_id="test",
-            local_tag="l",
-            remote_tag="r",
-            state=DialogState.CONFIRMED,
-        )
-        uac = SipUAC(transport)  # type: ignore[arg-type]
+        uac, call = self._make_early_call(transport)
+        call.dialog.confirm()
+
         with pytest.raises(ValueError, match="expected early"):
-            uac.send_cancel(dialog, REMOTE_ADDR)
+            uac.send_cancel(call)
 
     def test_cancel_has_correct_headers(self) -> None:
         transport = FakeTransport()
-        dialog = Dialog(
-            call_id="cancel-hdr",
-            local_tag="ltag",
-            remote_tag="rtag",
-            local_uri="sip:bob@example.com",
-            remote_uri="sip:alice@example.com",
-            remote_target="sip:alice@10.0.0.1:5060",
-            state=DialogState.EARLY,
-        )
+        uac, call = self._make_early_call(transport)
 
-        uac = SipUAC(transport)  # type: ignore[arg-type]
-        cancel = uac.send_cancel(dialog, REMOTE_ADDR)
+        cancel = uac.send_cancel(call)
 
-        assert cancel.call_id == "cancel-hdr"
+        assert cancel.call_id == call.dialog.call_id
         cseq = cancel.cseq
         assert cseq is not None
         assert cseq.method == "CANCEL"
+
+    def test_cancel_matches_invite_branch_and_cseq(self) -> None:
+        """RFC 3261 §9.1: CANCEL reuses the INVITE's Via branch and CSeq number."""
+        transport = FakeTransport()
+        uac, call = self._make_early_call(transport)
+        invite = call.invite
+
+        cancel = uac.send_cancel(call)
+
+        # Same topmost Via — identical branch
+        assert cancel.headers.get_first("via") == invite.headers.get_first("via")
+        assert cancel.via[0].branch == invite.via[0].branch
+
+        # Same CSeq number, method CANCEL
+        invite_cseq = invite.cseq
+        cancel_cseq = cancel.cseq
+        assert invite_cseq is not None and cancel_cseq is not None
+        assert cancel_cseq.seq == invite_cseq.seq
+
+        # Same Request-URI, From and To (no remote tag yet)
+        assert cancel.uri == invite.uri
+        assert cancel.headers.get_first("from") == invite.headers.get_first("from")
+        assert cancel.headers.get_first("to") == invite.headers.get_first("to")
+        cancel_to = cancel.to_addr
+        assert cancel_to is not None and cancel_to.tag is None
 
 
 class TestSendInfo:
@@ -1296,28 +1296,30 @@ class TestDigestAuth:
         # Should NOT have Proxy-Authorization
         assert retry_msg.get_header("proxy-authorization") is None
 
-    def test_digest_computation_correctness(self) -> None:
-        """Verify digest response matches known RFC 2617 computation."""
-        import hashlib
+    def test_qop_challenge_produces_qop_credentials(self) -> None:
+        """A qop="auth" challenge (RFC 7616) → credentials with qop, nc, cnonce."""
+        transport, uac, call = self._make_uac_and_call_with_auth()
+        transport.sent.clear()
 
-        transport = FakeTransport()
-        uac = SipUAC(transport)  # type: ignore[arg-type]
-
-        result = uac._compute_digest(
-            username="alice",
-            realm="asterisk",
-            password="secret",
-            method="INVITE",
-            uri="sip:them@example.com",
-            nonce="abc123def456",
+        raw = _make_response(
+            call.invite,
+            407,
+            "Proxy Authentication Required",
+            extra_headers={"Proxy-Authenticate": self.CHALLENGE_407},
         )
+        resp = SipMessage.parse(raw)
+        assert isinstance(resp, SipResponse)
+        uac.handle_response(resp, REMOTE_ADDR)
 
-        # Manual computation
-        ha1 = hashlib.md5(b"alice:asterisk:secret").hexdigest()
-        ha2 = hashlib.md5(b"INVITE:sip:them@example.com").hexdigest()
-        expected = hashlib.md5(f"{ha1}:abc123def456:{ha2}".encode()).hexdigest()
-
-        assert result == expected
+        retry_msg = transport.sent[0][0]
+        assert isinstance(retry_msg, SipRequest)
+        proxy_auth = retry_msg.get_header("proxy-authorization")
+        assert proxy_auth is not None
+        # qop mode: token (unquoted) qop, nc, and a quoted cnonce
+        assert "qop=auth" in proxy_auth
+        assert "nc=00000001" in proxy_auth
+        assert 'cnonce="' in proxy_auth
+        assert "algorithm=MD5" in proxy_auth
 
     def test_max_one_retry(self) -> None:
         """Second 407 after auth attempt → rejection (no infinite loop)."""
@@ -1453,3 +1455,133 @@ class TestDigestAuth:
 
         # Call is still tracked
         assert uac.get_call(original_call_id) is call
+
+
+# --- re-INVITE acknowledgement (RFC 3261 §13.2.2.4) ---
+
+
+class TestReinviteAck:
+    def _answered_outbound_call(
+        self, transport: FakeTransport
+    ) -> tuple[SipUAC, OutgoingCall, list[OutgoingCall]]:
+        uac = SipUAC(transport)  # type: ignore[arg-type]
+        answered: list[OutgoingCall] = []
+        sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
+        call = uac.send_invite(
+            "sip:me@example.com", "sip:them@example.com", REMOTE_ADDR, sdp_offer=sdp
+        )
+        call.on_answer = lambda c: answered.append(c)
+
+        raw_200 = _make_response(call.invite, 200, "OK", remote_tag="rtag-1")
+        resp = SipMessage.parse(raw_200)
+        assert isinstance(resp, SipResponse)
+        uac.handle_response(resp, REMOTE_ADDR)
+        transport.sent.clear()
+        return uac, call, answered
+
+    def test_reinvite_ack_uses_reinvite_cseq(self) -> None:
+        """The ACK for a re-INVITE 200 carries the re-INVITE's CSeq number."""
+        transport = FakeTransport()
+        uac, call, _ = self._answered_outbound_call(transport)
+
+        sdp = build_sdp(
+            "10.0.0.2",
+            30000,
+            0,
+            "PCMU",
+        )
+        reinvite = uac.send_reinvite(call.dialog, sdp, REMOTE_ADDR)
+        reinvite_cseq = reinvite.cseq
+        assert reinvite_cseq is not None
+        assert reinvite_cseq.seq == 2
+
+        raw_200 = _make_response(reinvite, 200, "OK")
+        resp = SipMessage.parse(raw_200)
+        assert isinstance(resp, SipResponse)
+        uac.handle_response(resp, REMOTE_ADDR)
+
+        acks = [m for m, _ in transport.sent if isinstance(m, SipRequest) and m.method == "ACK"]
+        assert len(acks) == 1
+        ack_cseq = acks[0].cseq
+        assert ack_cseq is not None
+        assert ack_cseq.seq == 2
+        assert ack_cseq.method == "ACK"
+
+    def test_reinvite_200_does_not_replay_on_answer(self) -> None:
+        transport = FakeTransport()
+        uac, call, answered = self._answered_outbound_call(transport)
+        assert len(answered) == 1
+
+        sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
+        reinvite = uac.send_reinvite(call.dialog, sdp, REMOTE_ADDR)
+        raw_200 = _make_response(reinvite, 200, "OK")
+        resp = SipMessage.parse(raw_200)
+        assert isinstance(resp, SipResponse)
+        uac.handle_response(resp, REMOTE_ADDR)
+
+        assert len(answered) == 1  # still exactly one answer callback
+
+    def test_reinvite_updates_tracked_invite(self) -> None:
+        transport = FakeTransport()
+        uac, call, _ = self._answered_outbound_call(transport)
+
+        sdp = build_sdp("10.0.0.2", 30000, 0, "PCMU")
+        reinvite = uac.send_reinvite(call.dialog, sdp, REMOTE_ADDR)
+
+        assert call.invite is reinvite
+
+    def test_non_invite_200_is_ignored(self) -> None:
+        """A 200 to INFO must not trigger ACK or answer machinery."""
+        transport = FakeTransport()
+        uac, call, answered = self._answered_outbound_call(transport)
+
+        info = uac.send_info(call.dialog, "Signal=1\r\n", "application/dtmf-relay", REMOTE_ADDR)
+        transport.sent.clear()
+
+        raw_200 = _make_response(info, 200, "OK")
+        resp = SipMessage.parse(raw_200)
+        assert isinstance(resp, SipResponse)
+        uac.handle_response(resp, REMOTE_ADDR)
+
+        assert transport.sent == []  # no ACK
+        assert len(answered) == 1  # no answer replay
+
+
+# --- Advertised signaling address and rport (RFC 3581) ---
+
+
+class TestUacAdvertisedAddr:
+    def test_invite_advertises_public_addr(self) -> None:
+        transport = FakeTransport()
+        uac = SipUAC(
+            transport,  # type: ignore[arg-type]
+            advertised_addr=("203.0.113.10", 5070),
+        )
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
+
+        via = call.invite.via[0]
+        assert via.host == "203.0.113.10"
+        assert via.port == 5070
+
+        contact = call.invite.get_header("contact")
+        assert contact is not None
+        assert "203.0.113.10:5070" in contact
+
+    def test_invite_via_requests_rport(self) -> None:
+        transport = FakeTransport()
+        uac = SipUAC(transport)  # type: ignore[arg-type]
+        call = uac.send_invite("sip:me@example.com", "sip:them@example.com", REMOTE_ADDR)
+
+        via_raw = call.invite.get_header("via") or ""
+        assert ";rport" in via_raw
+
+    def test_in_dialog_requests_request_rport(self) -> None:
+        transport = FakeTransport()
+        _, call = _establish_call(transport)
+        transport.sent.clear()
+
+        uac = SipUAC(transport)  # type: ignore[arg-type]
+        bye = uac.send_bye(call.dialog, REMOTE_ADDR)
+
+        via_raw = bye.get_header("via") or ""
+        assert ";rport" in via_raw

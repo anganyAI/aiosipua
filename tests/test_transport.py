@@ -437,3 +437,126 @@ class TestReadSipMessage:
         data = await _read_sip_message(reader)
         assert data is not None
         assert body.encode() in data
+
+
+# --- Via stamping on receive (RFC 3261 §18.2.1, RFC 3581) ---
+
+
+class TestViaReceivedStamping:
+    def _dispatch(self, raw: str, addr: tuple[str, int]) -> SipRequest:
+        transport = UdpSipTransport()
+        received: list[SipRequest | SipResponse] = []
+        transport.on_message = lambda msg, _addr: received.append(msg)
+        transport._dispatch(raw.encode(), addr)
+        msg = received[0]
+        assert isinstance(msg, SipRequest)
+        return msg
+
+    def test_received_added_when_host_differs(self) -> None:
+        msg = self._dispatch(INVITE_RAW, ("203.0.113.9", 12345))
+        via = msg.via[0]
+        assert via.received == "203.0.113.9"
+
+    def test_rport_filled_when_requested(self) -> None:
+        raw = INVITE_RAW.replace("branch=z9hG4bK-test1", "branch=z9hG4bK-test1;rport")
+        msg = self._dispatch(raw, ("203.0.113.9", 12345))
+        via = msg.via[0]
+        assert via.rport == "12345"
+        # RFC 3581 §4: received MUST be set whenever rport is requested
+        assert via.received == "203.0.113.9"
+
+    def test_rport_filled_even_when_host_matches(self) -> None:
+        raw = INVITE_RAW.replace(
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test1",
+            "Via: SIP/2.0/UDP 203.0.113.9:5060;branch=z9hG4bK-test1;rport",
+        )
+        msg = self._dispatch(raw, ("203.0.113.9", 12345))
+        via = msg.via[0]
+        assert via.rport == "12345"
+        assert via.received == "203.0.113.9"
+
+    def test_untouched_when_host_matches_and_no_rport(self) -> None:
+        raw = INVITE_RAW.replace(
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test1",
+            "Via: SIP/2.0/UDP 203.0.113.9:5060;branch=z9hG4bK-test1",
+        )
+        msg = self._dispatch(raw, ("203.0.113.9", 5060))
+        via = msg.via[0]
+        assert via.received is None
+        assert via.rport is None
+
+    def test_responses_not_stamped(self) -> None:
+        transport = UdpSipTransport()
+        received: list[SipRequest | SipResponse] = []
+        transport.on_message = lambda msg, _addr: received.append(msg)
+        transport._dispatch(OK_200_RAW.encode(), ("203.0.113.9", 12345))
+        msg = received[0]
+        assert isinstance(msg, SipResponse)
+        assert msg.via[0].received is None
+
+    def test_only_top_via_stamped(self) -> None:
+        raw = INVITE_RAW.replace(
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test1\r\n",
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test1\r\n"
+            "Via: SIP/2.0/UDP 10.0.0.9:5060;branch=z9hG4bK-prev\r\n",
+        )
+        msg = self._dispatch(raw, ("203.0.113.9", 12345))
+        vias = msg.via
+        assert len(vias) == 2
+        assert vias[0].received == "203.0.113.9"
+        assert vias[1].received is None
+        assert vias[1].branch == "z9hG4bK-prev"
+
+
+# --- TCP background task tracking ---
+
+
+class TestTcpBackgroundTasks:
+    @pytest.mark.asyncio()
+    async def test_connect_holds_reader_task_reference(self) -> None:
+        server = TcpSipTransport(local_addr=("127.0.0.1", 0))
+        await server.start()
+        assert server._server is not None
+        server_port = server._server.sockets[0].getsockname()[1]
+
+        client = TcpSipTransport(local_addr=("127.0.0.1", 0))
+        await client.connect(("127.0.0.1", server_port))
+
+        # The reader task must be strongly referenced (GC protection)
+        assert len(client._tasks) == 1
+        task = next(iter(client._tasks))
+        assert not task.done()
+
+        await client.stop()
+        assert task.done()
+        assert not client._tasks
+        await server.stop()
+
+    @pytest.mark.asyncio()
+    async def test_send_flushes_and_discards_task(self) -> None:
+        received: list[SipRequest | SipResponse] = []
+        server = TcpSipTransport(local_addr=("127.0.0.1", 0))
+        server.on_message = lambda msg, addr: received.append(msg)
+        await server.start()
+        assert server._server is not None
+        server_port = server._server.sockets[0].getsockname()[1]
+
+        client = TcpSipTransport(local_addr=("127.0.0.1", 0))
+        remote = ("127.0.0.1", server_port)
+        await client.connect(remote)
+
+        msg = SipMessage.parse(INVITE_RAW)
+        assert isinstance(msg, SipRequest)
+        client.send(msg, remote)
+
+        for _ in range(50):
+            if received:
+                break
+            await asyncio.sleep(0.01)
+        assert len(received) == 1
+
+        # Flush task completed and removed itself; only the reader remains
+        assert len(client._tasks) == 1
+
+        await client.stop()
+        await server.stop()

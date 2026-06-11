@@ -31,6 +31,34 @@ ByeCallback = Callable[["IncomingCall", SipRequest], Any]
 RequestCallback = Callable[[SipRequest, "tuple[str, int]"], Any]
 
 
+def _dialog_matches(dialog: Dialog, request: SipRequest) -> bool:
+    """Check an in-dialog request's tags against the dialog (RFC 3261 §12.2.2).
+
+    A request claiming an existing Call-ID but carrying the wrong From/To
+    tags does not belong to the dialog and must be answered with 481.
+    """
+    from_addr = request.from_addr
+    to_addr = request.to_addr
+    from_tag = (from_addr.tag if from_addr else None) or ""
+    to_tag = (to_addr.tag if to_addr else None) or ""
+    return from_tag == dialog.remote_tag and to_tag == dialog.local_tag
+
+
+def _remote_cseq_valid(dialog: Dialog, request: SipRequest) -> bool:
+    """Validate and record the remote CSeq (RFC 3261 §12.2.2).
+
+    In-dialog requests must carry a CSeq strictly higher than the last one
+    seen; on success the dialog's ``remote_cseq`` is updated.
+    """
+    cseq = request.cseq
+    if cseq is None:
+        return False
+    if dialog.remote_cseq and cseq.seq <= dialog.remote_cseq:
+        return False
+    dialog.remote_cseq = cseq.seq
+    return True
+
+
 @dataclass
 class IncomingCall:
     """An incoming SIP call (INVITE transaction).
@@ -45,6 +73,7 @@ class IncomingCall:
     transport: SipTransport | None = field(default=None, repr=False)
     source_addr: tuple[str, int] = ("0.0.0.0", 0)
     user_agent: str | None = field(default=None, repr=False)
+    advertised_addr: tuple[str, int] | None = field(default=None, repr=False)
     _answered: bool = field(default=False, init=False, repr=False)
 
     @property
@@ -122,6 +151,14 @@ class IncomingCall:
         self._send_response(status_code, reason)
         self.dialog.terminate()
 
+    def _signaling_addr(self) -> tuple[str, int]:
+        """Address to advertise in Via/Contact (advertised_addr, else bind address)."""
+        if self.advertised_addr is not None:
+            return self.advertised_addr
+        if self.transport is not None:
+            return self.transport.local_addr
+        return ("0.0.0.0", 5060)
+
     def hangup(self) -> SipRequest | None:
         """Send a BYE to terminate an established call.
 
@@ -131,9 +168,7 @@ class IncomingCall:
         if self.dialog.state != DialogState.CONFIRMED:
             return None
 
-        local_addr = ("0.0.0.0", 5060)
-        if self.transport is not None:
-            local_addr = self.transport.local_addr
+        local_addr = self._signaling_addr()
 
         bye = self.dialog.create_request(
             "BYE",
@@ -159,7 +194,7 @@ class IncomingCall:
         """Build and send a response to the INVITE."""
         contact: str | None = None
         if self.transport is not None:
-            addr = self.transport.local_addr
+            addr = self._signaling_addr()
             contact = f"<sip:{addr[0]}:{addr[1]}>"
 
         resp = self.dialog.create_response(
@@ -201,11 +236,14 @@ class SipUAS:
         *,
         user_agent: str | None = None,
         uac: SipUAC | None = None,
+        advertised_addr: tuple[str, int] | None = None,
     ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
         self.user_agent = user_agent
         self.uac: SipUAC | None = uac
+        # Address advertised in Via/Contact (NAT: bind on private, signal public)
+        self.advertised_addr = advertised_addr
 
         # Callbacks
         self.on_invite: InviteCallback | None = None
@@ -272,6 +310,12 @@ class SipUAS:
         # Check for re-INVITE (existing dialog in UAS)
         existing = self._calls.get(call_id)
         if existing and existing.dialog.state == DialogState.CONFIRMED:
+            if not _dialog_matches(existing.dialog, request):
+                self._send_error(request, 481, "Call/Transaction Does Not Exist")
+                return
+            if not _remote_cseq_valid(existing.dialog, request):
+                self._send_error(request, 500, "Server Internal Error")
+                return
             # re-INVITE
             existing.invite = request
             # Re-parse SDP if present
@@ -283,6 +327,13 @@ class SipUAS:
 
         # Check for re-INVITE on an outbound call (dialog lives in UAC)
         if self.uac is not None and call_id in self.uac._calls:
+            uac_dialog = self.uac._calls[call_id].dialog
+            if not _dialog_matches(uac_dialog, request):
+                self._send_error(request, 481, "Call/Transaction Does Not Exist")
+                return
+            if not _remote_cseq_valid(uac_dialog, request):
+                self._send_error(request, 500, "Server Internal Error")
+                return
             # Build an IncomingCall wrapper so the re-INVITE handler can
             # send responses (accept/reject) through the same interface.
             dialog = create_dialog_from_request(request)
@@ -297,6 +348,7 @@ class SipUAS:
                 transport=self.transport,
                 source_addr=addr,
                 user_agent=self.user_agent,
+                advertised_addr=self.advertised_addr,
             )
             wrapper._answered = True  # prevent reject(487) on CANCEL
             if self.on_reinvite is not None:
@@ -305,6 +357,12 @@ class SipUAS:
 
         # New INVITE — create dialog
         dialog = create_dialog_from_request(request)
+
+        # Track the INVITE server transaction so CANCEL can match by branch
+        try:
+            self.transactions.create_server(request)
+        except ValueError:
+            logger.warning("INVITE without Via branch from %s — CANCEL matching disabled", addr)
 
         # Parse SDP offer from body
         sdp_offer = None
@@ -318,6 +376,7 @@ class SipUAS:
             transport=self.transport,
             source_addr=addr,
             user_agent=self.user_agent,
+            advertised_addr=self.advertised_addr,
         )
 
         self._calls[call_id] = call
@@ -330,20 +389,42 @@ class SipUAS:
             self.on_invite(call)
 
     def _handle_ack(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an incoming ACK (confirms a 2xx response)."""
+        """Handle an incoming ACK (confirms a 2xx, or closes a rejected INVITE)."""
         call_id = request.call_id or ""
         call = self._calls.get(call_id)
-        if call is not None:
-            # ACK confirms the dialog
+        if call is None or not _dialog_matches(call.dialog, request):
+            return
+
+        if call.dialog.state == DialogState.TERMINATED:
+            # ACK to our error response — the INVITE transaction is over
+            self._calls.pop(call_id, None)
+        else:
             call.dialog.confirm()
+        self._remove_invite_transaction(call.invite)
 
     def _handle_bye(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming BYE (terminates a call)."""
         call_id = request.call_id or ""
         call = self._calls.get(call_id)
 
+        if call is not None:
+            if not _dialog_matches(call.dialog, request):
+                self._send_error(request, 481, "Call/Transaction Does Not Exist")
+                return
+            if not _remote_cseq_valid(call.dialog, request):
+                self._send_error(request, 500, "Server Internal Error")
+                return
+            self._remove_invite_transaction(call.invite)
+
         # Check UAC's calls for outbound dialogs
         if call is None and self.uac is not None and call_id in self.uac._calls:
+            uac_dialog = self.uac._calls[call_id].dialog
+            if not _dialog_matches(uac_dialog, request):
+                self._send_error(request, 481, "Call/Transaction Does Not Exist")
+                return
+            if not _remote_cseq_valid(uac_dialog, request):
+                self._send_error(request, 500, "Server Internal Error")
+                return
             # Build a wrapper so on_bye callback has the same interface
             dialog = create_dialog_from_request(request)
             dialog.confirm()
@@ -353,6 +434,7 @@ class SipUAS:
                 transport=self.transport,
                 source_addr=addr,
                 user_agent=self.user_agent,
+                advertised_addr=self.advertised_addr,
             )
             call._answered = True
             # Remove from UAC tracking
@@ -378,9 +460,18 @@ class SipUAS:
             self.on_bye(call, request)
 
     def _handle_cancel(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an incoming CANCEL (cancels a pending INVITE)."""
-        call_id = request.call_id or ""
-        call = self._calls.get(call_id)
+        """Handle an incoming CANCEL (cancels a pending INVITE).
+
+        Matched against the INVITE server transaction by Via branch
+        (RFC 3261 §9.2), not by Call-ID.
+        """
+        vias = request.via
+        branch = vias[0].branch if vias else None
+        txn = self.transactions.get_server(branch, "INVITE") if branch else None
+
+        call: IncomingCall | None = None
+        if txn is not None and txn.request is not None:
+            call = self._calls.get(txn.request.call_id or "")
 
         if call is None:
             self._send_error(request, 481, "Call/Transaction Does Not Exist")
@@ -396,10 +487,22 @@ class SipUAS:
         if not call._answered:
             call.reject(487, "Request Terminated")
 
-        self._calls.pop(call_id, None)
+        self._calls.pop(call.call_id, None)
+        if txn is not None:
+            self.transactions.remove(txn)
 
         if self.on_cancel is not None:
             self.on_cancel(request, addr)
+
+    def _remove_invite_transaction(self, invite: SipRequest) -> None:
+        """Drop the server transaction tracked for *invite*, if any."""
+        vias = invite.via
+        branch = vias[0].branch if vias else None
+        if not branch:
+            return
+        txn = self.transactions.get_server(branch, "INVITE")
+        if txn is not None:
+            self.transactions.remove(txn)
 
     def _handle_options(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming OPTIONS (capability query)."""

@@ -487,6 +487,22 @@ class SdpNegotiationError(Exception):
     """Raised when SDP offer/answer negotiation fails."""
 
 
+def _reject_media(m: MediaDescription) -> MediaDescription:
+    """Mirror an offered m-line as rejected: port 0 (RFC 3264 §6)."""
+    return MediaDescription(media=m.media, port=0, proto=m.proto, formats=list(m.formats))
+
+
+def _mirror_offer_media(
+    offer: SdpMessage, negotiated: dict[int, MediaDescription]
+) -> list[MediaDescription]:
+    """Answer media list with the offer's m-line count and order (RFC 3264 §6).
+
+    *negotiated* maps offer media index → answer media; every other offered
+    m-line is mirrored as rejected.
+    """
+    return [negotiated.get(i, _reject_media(m)) for i, m in enumerate(offer.media)]
+
+
 def negotiate_sdp(
     offer: SdpMessage,
     local_ip: str,
@@ -530,9 +546,14 @@ def negotiate_sdp(
         session_id = str(int(time.time()))
 
     # Find the first audio media section in the offer
-    offer_audio = offer.audio
-    if offer_audio is None:
+    audio_idx: int | None = None
+    for i, m in enumerate(offer.media):
+        if m.media == "audio":
+            audio_idx = i
+            break
+    if audio_idx is None:
         raise SdpNegotiationError("Offer contains no audio media")
+    offer_audio = offer.media[audio_idx]
 
     # Codec selection: first offered codec we support wins
     chosen: Codec | None = None
@@ -602,4 +623,5 @@ def negotiate_sdp(
     answer = _build_sdp_envelope(
         local_ip, session_id, session_name, [answer_media], advertised_ip=advertised_ip
     )
+    answer.media = _mirror_offer_media(offer, {audio_idx: answer_media})
     return answer, chosen.payload_type

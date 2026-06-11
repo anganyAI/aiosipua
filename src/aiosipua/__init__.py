@@ -6,6 +6,10 @@ from importlib.metadata import version as _version
 
 __version__ = _version("aiosipua")
 
+from .auth import (
+    SipDigestAuth,
+    build_credentials,
+)
 from .dialog import (
     Dialog,
     DialogState,
@@ -72,7 +76,6 @@ from .transport import (
 )
 from .uac import (
     OutgoingCall,
-    SipDigestAuth,
     SipUAC,
 )
 from .uas import (
@@ -122,6 +125,7 @@ __all__ = [
     "TransactionState",
     "UdpSipTransport",
     "Via",
+    "build_credentials",
     "build_sdp",
     "build_video_sdp",
     "create_dialog_from_request",

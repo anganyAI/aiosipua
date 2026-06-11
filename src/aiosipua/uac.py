@@ -12,11 +12,11 @@ timers — the proxy handles reliability.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .auth import SipDigestAuth, build_credentials
 from .dialog import Dialog, DialogState
 from .sdp import SdpMessage, parse_sdp, serialize_sdp
 from .transaction import TransactionLayer
@@ -30,14 +30,6 @@ if TYPE_CHECKING:
     from .transport import SipTransport
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SipDigestAuth:
-    """Credentials for SIP digest authentication (RFC 2617)."""
-
-    username: str
-    password: str
 
 
 @dataclass
@@ -124,7 +116,7 @@ class OutgoingCall:
         """
         if self.dialog.state != DialogState.EARLY:
             return None
-        return uac.send_cancel(self.dialog, self.remote_addr)
+        return uac.send_cancel(self)
 
     def hangup(self, uac: SipUAC) -> SipRequest | None:
         """Hang up the call (sends BYE if dialog is CONFIRMED).
@@ -147,15 +139,22 @@ class SipUAC:
         call.hangup(uac)
     """
 
-    def __init__(self, transport: SipTransport) -> None:
+    def __init__(
+        self,
+        transport: SipTransport,
+        *,
+        advertised_addr: tuple[str, int] | None = None,
+    ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
+        # Address advertised in Via/Contact (NAT: bind on private, signal public)
+        self.advertised_addr = advertised_addr
 
         # Outgoing calls keyed by Call-ID
         self._calls: dict[str, OutgoingCall] = {}
 
     def _local_addr(self) -> tuple[str, int]:
-        return self.transport.local_addr
+        return self.advertised_addr or self.transport.local_addr
 
     # --- Outbound INVITE ---
 
@@ -184,18 +183,12 @@ class SipUAC:
         Returns:
             An :class:`OutgoingCall` that can be used to await the response.
         """
-        from .message import SipRequest
-
-        addr = self._local_addr()
-        domain = addr[0]
-        call_id = generate_call_id(domain)
-        local_tag = generate_tag()
-        branch = generate_branch()
+        call_id = generate_call_id(self._local_addr()[0])
 
         # Create dialog
         dialog = Dialog(
             call_id=call_id,
-            local_tag=local_tag,
+            local_tag=generate_tag(),
             remote_tag="",
             local_uri=from_uri,
             remote_uri=to_uri,
@@ -204,49 +197,7 @@ class SipUAC:
             local_cseq=0,
         )
 
-        # Build INVITE request — use dialog.next_cseq() for proper CSeq
-        cseq_num = dialog.next_cseq()
-
-        from .headers import CSeq as CSeqObj
-        from .headers import Via, stringify_cseq, stringify_via
-
-        invite = SipRequest(method="INVITE", uri=to_uri)
-
-        # Via
-        via = Via(
-            transport="UDP",
-            host=addr[0],
-            port=addr[1],
-            params={"branch": branch},
-        )
-        invite.headers.append("Via", stringify_via(via))
-
-        # From (local)
-        invite.headers.set_single("From", f"<{from_uri}>;tag={local_tag}")
-
-        # To (remote — no tag yet)
-        invite.headers.set_single("To", f"<{to_uri}>")
-
-        # Call-ID
-        invite.headers.set_single("Call-ID", call_id)
-
-        # CSeq
-        invite.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE")))
-
-        # Max-Forwards
-        invite.headers.set_single("Max-Forwards", "70")
-
-        # Contact
-        invite.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
-
-        # SDP body
-        if sdp_offer is not None:
-            invite.body = serialize_sdp(sdp_offer)
-            invite.headers.set_single("Content-Type", "application/sdp")
-
-        # User-Agent
-        if user_agent:
-            invite.headers.set_single("User-Agent", user_agent)
+        invite = self._build_invite(dialog, sdp_offer=sdp_offer, user_agent=user_agent)
 
         # Extra headers
         if extra_headers:
@@ -293,6 +244,13 @@ class SipUAC:
         # Match to transaction
         self.transactions.match_response(response)
 
+        # Only INVITE responses drive call state — a 200 to INFO/BYE must not
+        # trigger ACK or answer callbacks
+        cseq = response.cseq
+        if cseq is not None and cseq.method.upper() != "INVITE":
+            logger.debug("%d for %s %s", response.status_code, cseq.method, call_id)
+            return
+
         status = response.status_code
 
         if status == 100:
@@ -314,13 +272,18 @@ class SipUAC:
             if response.body and response.content_type == "application/sdp":
                 call.sdp_answer = parse_sdp(response.body)
 
+            first_answer = not call._answered.is_set()
             call.dialog.confirm()
-            self._send_ack(call)
-            call._answered.set()
+            self._send_ack(call, response)
 
-            logger.info("Call answered: %s", call_id)
-            if call.on_answer is not None:
-                call.on_answer(call)
+            if first_answer:
+                call._answered.set()
+                logger.info("Call answered: %s", call_id)
+                if call.on_answer is not None:
+                    call.on_answer(call)
+            else:
+                # 2xx to a re-INVITE: ACK only, no answer callback replay
+                logger.info("re-INVITE answered: %s", call_id)
 
         elif status in (401, 407) and call._auth is not None and call._auth_attempts == 0:
             # Auth challenge — retry with credentials
@@ -431,18 +394,22 @@ class SipUAC:
 
         self.transport.send(invite, remote_addr)
 
+        # Keep the tracked call pointing at the latest INVITE
+        call = self._calls.get(dialog.call_id)
+        if call is not None:
+            call.invite = invite
+
         return invite
 
-    def send_cancel(self, dialog: Dialog, remote_addr: tuple[str, int]) -> SipRequest:
-        """Send a CANCEL for a pending INVITE (early dialog).
+    def send_cancel(self, call: OutgoingCall) -> SipRequest:
+        """Send a CANCEL for a pending INVITE (RFC 3261 §9.1).
 
-        The CANCEL must match the original INVITE's branch and CSeq.
-        Since we don't store the original INVITE here, this creates a
-        new CANCEL request using the dialog's current state.
+        The CANCEL is constructed from the original INVITE: same Request-URI,
+        same topmost Via (same branch), same From/To/Call-ID, and the same
+        CSeq number with method CANCEL.
 
         Args:
-            dialog: The early dialog to cancel.
-            remote_addr: Address to send the CANCEL to.
+            call: The outgoing call whose INVITE should be cancelled.
 
         Returns:
             The CANCEL request that was sent.
@@ -450,13 +417,37 @@ class SipUAC:
         Raises:
             ValueError: If the dialog is not in EARLY state.
         """
+        from .headers import CSeq as CSeqObj
+        from .headers import stringify_cseq
+        from .message import SipRequest
+
+        dialog = call.dialog
         if dialog.state != DialogState.EARLY:
             raise ValueError(f"Cannot send CANCEL: dialog is {dialog.state.value}, expected early")
 
-        addr = self._local_addr()
-        cancel = dialog.create_request("CANCEL", via_host=addr[0], via_port=addr[1])
+        invite = call.invite
+        cancel = SipRequest(method="CANCEL", uri=invite.uri)
 
-        self.transport.send(cancel, remote_addr)
+        # Topmost Via copied verbatim — the branch must match the INVITE's
+        top_via = invite.headers.get_first("via")
+        if top_via:
+            cancel.headers.append("Via", top_via)
+
+        for name in ("From", "To", "Call-ID"):
+            val = invite.headers.get_first(name)
+            if val:
+                cancel.headers.set_single(name, val)
+
+        invite_cseq = invite.cseq
+        seq = invite_cseq.seq if invite_cseq else 1
+        cancel.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=seq, method="CANCEL")))
+        cancel.headers.set_single("Max-Forwards", "70")
+
+        for route in invite.headers.get("route"):
+            cancel.headers.append("Route", route)
+
+        self.transactions.create_client(cancel)
+        self.transport.send(cancel, call.remote_addr)
         dialog.terminate()
 
         # Remove from outgoing calls if tracked
@@ -509,20 +500,6 @@ class SipUAC:
         if to_addr and to_addr.tag and not call.dialog.remote_tag:
             call.dialog.remote_tag = to_addr.tag
 
-    def _compute_digest(
-        self,
-        username: str,
-        realm: str,
-        password: str,
-        method: str,
-        uri: str,
-        nonce: str,
-    ) -> str:
-        """Compute an RFC 2617 MD5 digest response."""
-        ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
-        ha2 = hashlib.md5(f"{method}:{uri}".encode()).hexdigest()
-        return hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest()
-
     def _handle_auth_challenge(
         self,
         call: OutgoingCall,
@@ -530,7 +507,7 @@ class SipUAC:
         status: int,
     ) -> bool:
         """Handle a 401/407 auth challenge. Returns True if retry was sent."""
-        from .headers import AuthCredentials, parse_auth
+        from .headers import parse_auth
 
         # Pick the right challenge header
         header_name = "WWW-Authenticate" if status == 401 else "Proxy-Authenticate"
@@ -538,37 +515,11 @@ class SipUAC:
         if not challenge_str:
             return False
 
-        challenge = parse_auth(challenge_str)
-        if challenge.scheme.lower() != "digest":
-            return False
-
-        realm = challenge.params.get("realm", "")
-        nonce = challenge.params.get("nonce", "")
-        if not nonce:
-            return False
-
         assert call._auth is not None  # guaranteed by caller
-        digest_uri = call.invite.uri
-        digest_response = self._compute_digest(
-            call._auth.username,
-            realm,
-            call._auth.password,
-            "INVITE",
-            digest_uri,
-            nonce,
-        )
-
-        credentials = AuthCredentials(
-            scheme="Digest",
-            params={
-                "username": call._auth.username,
-                "realm": realm,
-                "nonce": nonce,
-                "uri": digest_uri,
-                "response": digest_response,
-                "algorithm": "MD5",
-            },
-        )
+        challenge = parse_auth(challenge_str)
+        credentials = build_credentials(call._auth, challenge, "INVITE", call.invite.uri)
+        if credentials is None:
+            return False
 
         auth_header_name = "Authorization" if status == 401 else "Proxy-Authorization"
         self._resend_invite_with_auth(call, credentials, auth_header_name)
@@ -578,9 +529,48 @@ class SipUAC:
             "Retrying INVITE with %s for %s (realm=%s)",
             auth_header_name,
             call.call_id,
-            realm,
+            challenge.params.get("realm", ""),
         )
         return True
+
+    def _build_invite(
+        self,
+        dialog: Dialog,
+        *,
+        sdp_offer: SdpMessage | None,
+        user_agent: str | None,
+    ) -> SipRequest:
+        """Build an INVITE for *dialog* with a fresh branch and the next CSeq."""
+        from .headers import CSeq as CSeqObj
+        from .headers import Via, stringify_cseq, stringify_via
+        from .message import SipRequest
+
+        addr = self._local_addr()
+        invite = SipRequest(method="INVITE", uri=dialog.remote_uri)
+
+        via = Via(
+            transport="UDP",
+            host=addr[0],
+            port=addr[1],
+            params={"branch": generate_branch(), "rport": None},
+        )
+        invite.headers.append("Via", stringify_via(via))
+        invite.headers.set_single("From", f"<{dialog.local_uri}>;tag={dialog.local_tag}")
+        invite.headers.set_single("To", f"<{dialog.remote_uri}>")
+        invite.headers.set_single("Call-ID", dialog.call_id)
+        invite.headers.set_single(
+            "CSeq", stringify_cseq(CSeqObj(seq=dialog.next_cseq(), method="INVITE"))
+        )
+        invite.headers.set_single("Max-Forwards", "70")
+        invite.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
+
+        if sdp_offer is not None:
+            invite.body = serialize_sdp(sdp_offer)
+            invite.headers.set_single("Content-Type", "application/sdp")
+        if user_agent:
+            invite.headers.set_single("User-Agent", user_agent)
+
+        return invite
 
     def _resend_invite_with_auth(
         self,
@@ -589,69 +579,25 @@ class SipUAC:
         auth_header_name: str,
     ) -> None:
         """Re-send INVITE with auth credentials (RFC 3261 §22.2)."""
-        from .headers import CSeq as CSeqObj
-        from .headers import Via, stringify_auth, stringify_cseq, stringify_via
-        from .message import SipRequest
+        from .headers import stringify_auth
 
-        addr = self._local_addr()
-        branch = generate_branch()
-        cseq_num = call.dialog.next_cseq()
-
-        invite = SipRequest(method="INVITE", uri=call.invite.uri)
-
-        # Via — new branch
-        via = Via(
-            transport="UDP",
-            host=addr[0],
-            port=addr[1],
-            params={"branch": branch},
+        invite = self._build_invite(
+            call.dialog, sdp_offer=call.sdp_offer, user_agent=call.user_agent
         )
-        invite.headers.append("Via", stringify_via(via))
-
-        # From (same as original)
-        invite.headers.set_single("From", f"<{call.dialog.local_uri}>;tag={call.dialog.local_tag}")
-
-        # To (same as original — no remote tag on retry)
-        invite.headers.set_single("To", f"<{call.dialog.remote_uri}>")
-
-        # Call-ID (same dialog)
-        invite.headers.set_single("Call-ID", call.dialog.call_id)
-
-        # CSeq — incremented
-        invite.headers.set_single("CSeq", stringify_cseq(CSeqObj(seq=cseq_num, method="INVITE")))
-
-        # Max-Forwards
-        invite.headers.set_single("Max-Forwards", "70")
-
-        # Contact
-        invite.headers.set_single("Contact", f"<sip:{addr[0]}:{addr[1]}>")
-
-        # SDP body (same as original)
-        if call.sdp_offer is not None:
-            from .sdp import serialize_sdp
-
-            invite.body = serialize_sdp(call.sdp_offer)
-            invite.headers.set_single("Content-Type", "application/sdp")
-
-        # User-Agent
-        if call.user_agent:
-            invite.headers.set_single("User-Agent", call.user_agent)
-
-        # Auth header
         invite.headers.set_single(auth_header_name, stringify_auth(credentials))
 
-        # Create client transaction and send
         self.transactions.create_client(invite)
         self.transport.send(invite, call.remote_addr)
 
         # Update call to reference the new INVITE
         call.invite = invite
 
-    def _send_ack(self, call: OutgoingCall) -> SipRequest:
+    def _send_ack(self, call: OutgoingCall, response: SipResponse) -> SipRequest:
         """Send an ACK for a 2xx response to an INVITE (RFC 3261 section 13.2.2.4).
 
-        ACK for 2xx is a new transaction (new branch) but uses the
-        same CSeq number as the original INVITE.
+        ACK for 2xx is a new transaction (new branch) but uses the same CSeq
+        number as the INVITE being acknowledged — taken from the response's
+        CSeq so that re-INVITEs are ACKed with their own number.
         """
         from .headers import CSeq as CSeqObj
         from .headers import Via, stringify_cseq, stringify_via
@@ -660,9 +606,13 @@ class SipUAC:
         addr = self._local_addr()
         branch = generate_branch()
 
-        # Get the INVITE's CSeq number
-        invite_cseq = call.invite.cseq
-        cseq_num = invite_cseq.seq if invite_cseq else 1
+        # CSeq number of the INVITE being acknowledged (echoed in the response)
+        response_cseq = response.cseq
+        if response_cseq is not None:
+            cseq_num = response_cseq.seq
+        else:
+            invite_cseq = call.invite.cseq
+            cseq_num = invite_cseq.seq if invite_cseq else 1
 
         ack = SipRequest(
             method="ACK",
@@ -674,7 +624,7 @@ class SipUAC:
             transport="UDP",
             host=addr[0],
             port=addr[1],
-            params={"branch": branch},
+            params={"branch": branch, "rport": None},
         )
         ack.headers.append("Via", stringify_via(via))
 

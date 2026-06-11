@@ -534,3 +534,92 @@ class TestNegotiateAndSerialize:
 
         assert answer2.rtp_address == ("172.16.0.1", 40000)
         assert chosen_pt == 0
+
+
+# --- m-line mirroring (RFC 3264 §6) ---
+
+AV_OFFER_AUDIO_FIRST = (
+    "v=0\r\n"
+    "o=- 1 1 IN IP4 203.0.113.10\r\n"
+    "s=-\r\n"
+    "c=IN IP4 203.0.113.10\r\n"
+    "t=0 0\r\n"
+    "m=audio 18000 RTP/AVP 0 101\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n"
+    "a=rtpmap:101 telephone-event/8000\r\n"
+    "a=sendrecv\r\n"
+    "m=video 18002 RTP/AVP 96\r\n"
+    "a=rtpmap:96 H264/90000\r\n"
+    "a=sendrecv\r\n"
+)
+
+AV_OFFER_VIDEO_FIRST = (
+    "v=0\r\n"
+    "o=- 1 1 IN IP4 203.0.113.10\r\n"
+    "s=-\r\n"
+    "c=IN IP4 203.0.113.10\r\n"
+    "t=0 0\r\n"
+    "m=video 18002 RTP/AVP 96\r\n"
+    "a=rtpmap:96 H264/90000\r\n"
+    "a=sendrecv\r\n"
+    "m=audio 18000 RTP/AVP 0\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n"
+    "a=sendrecv\r\n"
+)
+
+OFFER_WITH_APPLICATION = (
+    "v=0\r\n"
+    "o=- 1 1 IN IP4 203.0.113.10\r\n"
+    "s=-\r\n"
+    "c=IN IP4 203.0.113.10\r\n"
+    "t=0 0\r\n"
+    "m=audio 18000 RTP/AVP 0\r\n"
+    "a=rtpmap:0 PCMU/8000\r\n"
+    "m=application 18004 UDP/BFCP *\r\n"
+)
+
+
+class TestMlineMirroring:
+    def test_audio_video_offer_answered_with_two_mlines(self) -> None:
+        """RFC 3264 §6: the answer must mirror every offered m-line, in order."""
+        offer = parse_sdp(AV_OFFER_AUDIO_FIRST)
+        answer, pt = negotiate_sdp(offer, "10.0.0.5", 30000)
+
+        assert pt == 0
+        assert len(answer.media) == 2
+        assert answer.media[0].media == "audio"
+        assert answer.media[0].port == 30000
+        # Unhandled video stream is rejected with port 0, proto/formats mirrored
+        assert answer.media[1].media == "video"
+        assert answer.media[1].port == 0
+        assert answer.media[1].proto == "RTP/AVP"
+        assert answer.media[1].formats == ["96"]
+
+    def test_video_first_offer_preserves_order(self) -> None:
+        offer = parse_sdp(AV_OFFER_VIDEO_FIRST)
+        answer, _ = negotiate_sdp(offer, "10.0.0.5", 30000)
+
+        assert [m.media for m in answer.media] == ["video", "audio"]
+        assert answer.media[0].port == 0
+        assert answer.media[1].port == 30000
+
+    def test_non_av_media_rejected(self) -> None:
+        offer = parse_sdp(OFFER_WITH_APPLICATION)
+        answer, _ = negotiate_sdp(offer, "10.0.0.5", 30000)
+
+        assert len(answer.media) == 2
+        assert answer.media[1].media == "application"
+        assert answer.media[1].port == 0
+        assert answer.media[1].proto == "UDP/BFCP"
+
+    def test_rejected_mline_serializes(self) -> None:
+        offer = parse_sdp(AV_OFFER_AUDIO_FIRST)
+        answer, _ = negotiate_sdp(offer, "10.0.0.5", 30000)
+        text = serialize_sdp(answer)
+        assert "m=video 0 RTP/AVP 96" in text
+
+    def test_audio_only_offer_unchanged(self) -> None:
+        offer = parse_sdp(CARRIER_OFFER_BASIC)
+        answer, _ = negotiate_sdp(offer, "10.0.0.5", 30000)
+        assert len(answer.media) == 1
+        assert answer.media[0].media == "audio"

@@ -579,12 +579,19 @@ def _split_auth_params(s: str) -> list[str]:
     return parts
 
 
+# Params serialized as unquoted tokens (RFC 7616 §3.3/§3.4).  ``qop`` is a
+# token in credentials but a quoted list in challenges.
+_UNQUOTED_AUTH_PARAMS = frozenset({"algorithm", "nc", "stale"})
+
+
 def stringify_auth(auth: AuthChallenge | AuthCredentials) -> str:
     """Serialize an auth challenge or credentials back to string form."""
+    is_credentials = isinstance(auth, AuthCredentials)
     parts: list[str] = []
     for key, val in auth.params.items():
-        if val and (not val.isdigit() and val.lower() not in ("true", "false")):
-            parts.append(f'{key}="{val}"')
-        else:
+        k = key.lower()
+        if k in _UNQUOTED_AUTH_PARAMS or (k == "qop" and is_credentials):
             parts.append(f"{key}={val}")
+        else:
+            parts.append(f'{key}="{val}"')
     return f"{auth.scheme} {', '.join(parts)}"

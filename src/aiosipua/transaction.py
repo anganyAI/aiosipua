@@ -159,6 +159,14 @@ class TransactionLayer:
             return None
         return self._server.get((branch, request.method))
 
+    def get_server(self, branch: str, method: str) -> Transaction | None:
+        """Look up a server transaction by Via branch and method.
+
+        Used to match a CANCEL to the INVITE it cancels (RFC 3261 §9.2):
+        same branch, method INVITE.
+        """
+        return self._server.get((branch, method))
+
     # --- Cleanup ---
 
     def remove(self, txn: Transaction) -> None:

@@ -5,16 +5,46 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
+from .headers import parse_via, stringify_via
 from .message import SipMessage, SipRequest, SipResponse
 
 logger = logging.getLogger(__name__)
 
 # Type alias for the message callback: (message, sender_addr)
 MessageCallback = Callable[[SipRequest | SipResponse, tuple[str, int]], None]
+
+
+def _stamp_via_received(request: SipRequest, addr: tuple[str, int]) -> None:
+    """Record the actual source address in the topmost Via (RFC 3261 §18.2.1, RFC 3581).
+
+    Adds ``received`` when the Via sent-by host differs from the source IP,
+    and fills in ``rport`` with the source port when the client requested it
+    (valueless ``rport`` parameter).
+    """
+    raw_vias = request.headers.get("via")
+    if not raw_vias:
+        return
+    via = parse_via(raw_vias[0])
+
+    rport_requested = "rport" in via.params and not via.params["rport"]
+    changed = False
+    if via.host != addr[0] or rport_requested:
+        via.params["received"] = addr[0]
+        changed = True
+    if rport_requested:
+        via.params["rport"] = str(addr[1])
+        changed = True
+
+    if changed:
+        rest = raw_vias[1:]
+        request.headers.remove("Via")
+        request.headers.append("Via", stringify_via(via))
+        for v in rest:
+            request.headers.append("Via", v)
 
 
 def _response_destination(msg: SipResponse) -> tuple[str, int] | None:
@@ -78,6 +108,9 @@ class SipTransport:
         except Exception:
             logger.warning("Failed to parse SIP message from %s", addr, exc_info=True)
             return
+
+        if isinstance(msg, SipRequest):
+            _stamp_via_received(msg, addr)
 
         if self.on_message is not None:
             try:
@@ -148,6 +181,14 @@ class TcpSipTransport(SipTransport):
     _connections: dict[tuple[str, int], tuple[asyncio.StreamReader, asyncio.StreamWriter]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _tasks: set[asyncio.Task[None]] = field(default_factory=set, init=False, repr=False)
+
+    def _spawn(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Create a background task and keep a strong reference until it completes."""
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     async def start(self) -> None:
         self._server = await asyncio.start_server(
@@ -185,6 +226,15 @@ class TcpSipTransport(SipTransport):
             raise RuntimeError(f"No TCP connection to {addr}")
         _, writer = conn
         writer.write(bytes(message))
+        self._spawn(self._flush(writer, addr))
+
+    async def _flush(self, writer: asyncio.StreamWriter, addr: tuple[str, int]) -> None:
+        """Apply TCP backpressure; drop the connection if the peer is gone."""
+        try:
+            await writer.drain()
+        except (ConnectionError, BrokenPipeError):
+            logger.warning("TCP connection to %s lost during send", addr)
+            self._connections.pop(addr, None)
 
     async def connect(
         self, remote_addr: tuple[str, int]
@@ -197,7 +247,7 @@ class TcpSipTransport(SipTransport):
         reader, writer = await asyncio.open_connection(remote_addr[0], remote_addr[1])
         self._connections[remote_addr] = (reader, writer)
         # Read incoming messages in background
-        asyncio.get_running_loop().create_task(self._handle_incoming(reader, writer, remote_addr))
+        self._spawn(self._handle_incoming(reader, writer, remote_addr))
         return reader, writer
 
     async def _handle_incoming(
@@ -219,6 +269,13 @@ class TcpSipTransport(SipTransport):
             self._connections.pop(addr, None)
 
     async def stop(self) -> None:
+        # Cancel background readers/flushers before tearing down connections
+        for task in list(self._tasks):
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks.clear()
+
         # Close all connections
         for _, writer in self._connections.values():
             writer.close()

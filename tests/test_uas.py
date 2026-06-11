@@ -541,3 +541,218 @@ class TestSipUASStartStop:
 
         await uas.stop()
         assert not transport._started
+
+
+# --- Dialog validation (RFC 3261 §12.2.2) ---
+
+
+def _make_reinvite(call_id: str, from_tag: str, to_tag: str, cseq: int) -> str:
+    return (
+        "INVITE sip:bob@10.0.0.2:5060 SIP/2.0\r\n"
+        f"Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-reinv-{cseq};rport\r\n"
+        f"From: <sip:alice@example.com>;tag={from_tag}\r\n"
+        f"To: <sip:bob@example.com>;tag={to_tag}\r\n"
+        f"Call-ID: {call_id}\r\n"
+        f"CSeq: {cseq} INVITE\r\n"
+        "Contact: <sip:alice@10.0.0.1:5060>\r\n"
+        "Max-Forwards: 70\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n"
+    )
+
+
+class TestDialogValidation:
+    def _establish(self) -> tuple[FakeTransport, SipUAS, IncomingCall]:
+        transport = FakeTransport()
+        uas = SipUAS(transport)  # type: ignore[arg-type]
+        calls: list[IncomingCall] = []
+        uas.on_invite = lambda call: calls.append(call)
+        transport.on_message = uas._on_message
+        transport.inject(INVITE_RAW)
+        call = calls[0]
+        call.accept()
+        transport.sent.clear()
+        return transport, uas, call
+
+    def test_bye_with_forged_from_tag_rejected(self) -> None:
+        """A BYE with the right Call-ID but a wrong From tag must get 481."""
+        transport, uas, call = self._establish()
+
+        bye_raw = _make_bye("test-call-1@example.com", "evil-tag", call.dialog.local_tag)
+        transport.inject(bye_raw)
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        assert resp.status_code == 481
+        # Call untouched
+        assert call.dialog.state == DialogState.CONFIRMED
+        assert uas.get_call("test-call-1@example.com") is call
+
+    def test_bye_with_forged_to_tag_rejected(self) -> None:
+        transport, uas, call = self._establish()
+
+        bye_raw = _make_bye("test-call-1@example.com", "from-tag-1", "wrong-local-tag")
+        transport.inject(bye_raw)
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        assert resp.status_code == 481
+        assert call.dialog.state == DialogState.CONFIRMED
+
+    def test_bye_with_valid_tags_accepted(self) -> None:
+        transport, uas, call = self._establish()
+
+        bye_raw = _make_bye("test-call-1@example.com", "from-tag-1", call.dialog.local_tag)
+        transport.inject(bye_raw)
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        assert resp.status_code == 200
+        assert call.dialog.state == DialogState.TERMINATED
+
+    def test_reinvite_with_replayed_cseq_rejected_500(self) -> None:
+        """An in-dialog CSeq lower or equal to the last seen one must get 500."""
+        transport, uas, call = self._establish()
+        reinvites: list[IncomingCall] = []
+        uas.on_reinvite = lambda c: reinvites.append(c)
+
+        # The INVITE used CSeq 1 — replaying CSeq 1 is invalid
+        transport.inject(
+            _make_reinvite("test-call-1@example.com", "from-tag-1", call.dialog.local_tag, 1)
+        )
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        assert resp.status_code == 500
+        assert not reinvites
+
+    def test_reinvite_with_higher_cseq_accepted(self) -> None:
+        transport, uas, call = self._establish()
+        reinvites: list[IncomingCall] = []
+        uas.on_reinvite = lambda c: reinvites.append(c)
+
+        transport.inject(
+            _make_reinvite("test-call-1@example.com", "from-tag-1", call.dialog.local_tag, 2)
+        )
+
+        assert len(reinvites) == 1
+        assert call.dialog.remote_cseq == 2
+
+    def test_reinvite_with_forged_tags_rejected(self) -> None:
+        transport, uas, call = self._establish()
+        reinvites: list[IncomingCall] = []
+        uas.on_reinvite = lambda c: reinvites.append(c)
+
+        transport.inject(
+            _make_reinvite("test-call-1@example.com", "evil-tag", call.dialog.local_tag, 2)
+        )
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        assert resp.status_code == 481
+        assert not reinvites
+
+
+class TestCancelTransactionMatching:
+    """CANCEL is matched to the INVITE by Via branch (RFC 3261 §9.2)."""
+
+    def _pending_invite(self) -> tuple[FakeTransport, SipUAS, IncomingCall]:
+        transport = FakeTransport()
+        uas = SipUAS(transport)  # type: ignore[arg-type]
+        calls: list[IncomingCall] = []
+        uas.on_invite = lambda call: calls.append(call)
+        transport.on_message = uas._on_message
+        transport.inject(INVITE_RAW)
+        transport.sent.clear()
+        return transport, uas, calls[0]
+
+    def test_cancel_with_wrong_branch_rejected(self) -> None:
+        transport, uas, call = self._pending_invite()
+
+        cancel_raw = (
+            "CANCEL sip:bob@10.0.0.2:5060 SIP/2.0\r\n"
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-other-branch\r\n"
+            "From: <sip:alice@example.com>;tag=from-tag-1\r\n"
+            "To: <sip:bob@example.com>\r\n"
+            "Call-ID: test-call-1@example.com\r\n"
+            "CSeq: 1 CANCEL\r\n"
+            "Max-Forwards: 70\r\n"
+            "Content-Length: 0\r\n"
+            "\r\n"
+        )
+        transport.inject(cancel_raw)
+
+        status_codes = [m.status_code for m, _ in transport.sent if isinstance(m, SipResponse)]
+        assert status_codes == [481]
+        # INVITE still pending
+        assert uas.get_call("test-call-1@example.com") is call
+
+    def test_cancel_with_matching_branch_accepted(self) -> None:
+        transport, uas, call = self._pending_invite()
+
+        transport.inject(_make_cancel("test-call-1@example.com", "from-tag-1"))
+
+        status_codes = [m.status_code for m, _ in transport.sent if isinstance(m, SipResponse)]
+        assert 200 in status_codes
+        assert 487 in status_codes
+        assert uas.get_call("test-call-1@example.com") is None
+
+
+class TestAckCleanup:
+    def test_ack_after_reject_removes_call(self) -> None:
+        """ACK to an error response closes the INVITE transaction and frees the call."""
+        transport = FakeTransport()
+        uas = SipUAS(transport)  # type: ignore[arg-type]
+        calls: list[IncomingCall] = []
+        uas.on_invite = lambda call: calls.append(call)
+        transport.on_message = uas._on_message
+
+        transport.inject(INVITE_RAW)
+        call = calls[0]
+        call.reject(486)
+        assert uas.get_call("test-call-1@example.com") is call
+
+        transport.inject(_make_ack("test-call-1@example.com", "from-tag-1", call.dialog.local_tag))
+
+        assert uas.get_call("test-call-1@example.com") is None
+
+    def test_ack_with_wrong_tags_ignored(self) -> None:
+        transport = FakeTransport()
+        uas = SipUAS(transport)  # type: ignore[arg-type]
+        calls: list[IncomingCall] = []
+        uas.on_invite = lambda call: calls.append(call)
+        transport.on_message = uas._on_message
+
+        transport.inject(INVITE_RAW)
+        call = calls[0]
+        call.accept()
+        call.dialog.state = DialogState.EARLY  # pretend ACK not yet seen
+
+        transport.inject(_make_ack("test-call-1@example.com", "evil-tag", "wrong"))
+        assert call.dialog.state == DialogState.EARLY
+
+        transport.inject(_make_ack("test-call-1@example.com", "from-tag-1", call.dialog.local_tag))
+        assert call.dialog.state == DialogState.CONFIRMED
+
+
+class TestAdvertisedAddr:
+    def test_responses_advertise_public_contact(self) -> None:
+        transport = FakeTransport()
+        uas = SipUAS(
+            transport,  # type: ignore[arg-type]
+            advertised_addr=("203.0.113.10", 5080),
+        )
+        calls: list[IncomingCall] = []
+        uas.on_invite = lambda call: calls.append(call)
+        transport.on_message = uas._on_message
+
+        transport.inject(INVITE_RAW)
+        transport.sent.clear()
+        calls[0].accept()
+
+        resp, _ = transport.sent[0]
+        assert isinstance(resp, SipResponse)
+        contact = resp.get_header("contact")
+        assert contact is not None
+        assert "203.0.113.10:5080" in contact
+        assert "10.0.0.2" not in contact
