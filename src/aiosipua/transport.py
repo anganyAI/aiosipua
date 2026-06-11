@@ -105,12 +105,11 @@ class SipTransport:
         try:
             text = data.decode("utf-8", errors="replace")
             msg = SipMessage.parse(text)
+            if isinstance(msg, SipRequest):
+                _stamp_via_received(msg, addr)
         except Exception:
             logger.warning("Failed to parse SIP message from %s", addr, exc_info=True)
             return
-
-        if isinstance(msg, SipRequest):
-            _stamp_via_received(msg, addr)
 
         if self.on_message is not None:
             try:

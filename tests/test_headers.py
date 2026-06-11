@@ -285,3 +285,23 @@ class TestAuth:
         assert auth.scheme == "Digest"
         assert auth.params["username"] == "alice"
         assert auth.params["response"] == "def456"
+
+
+class TestMalformedBracketedPorts:
+    """Non-numeric ports after an IPv6 bracket must not raise (network input)."""
+
+    def test_parse_via_bad_bracket_port(self) -> None:
+        from aiosipua.headers import parse_via
+
+        via = parse_via("SIP/2.0/UDP [::1]:abc;branch=z9hG4bK-x")
+        assert via.host == "[::1]:abc"
+        assert via.port is None
+        assert via.branch == "z9hG4bK-x"
+
+    def test_parse_uri_bad_bracket_port(self) -> None:
+        from aiosipua.headers import parse_uri
+
+        uri = parse_uri("sip:alice@[::1]:abc")
+        assert uri.user == "alice"
+        assert uri.host == "[::1]:abc"
+        assert uri.port is None

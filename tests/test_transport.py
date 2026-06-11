@@ -507,6 +507,18 @@ class TestViaReceivedStamping:
         assert vias[1].received is None
         assert vias[1].branch == "z9hG4bK-prev"
 
+    def test_malformed_bracketed_via_port_does_not_crash_dispatch(self) -> None:
+        """A crafted Via with a non-numeric bracketed port must not escape _dispatch."""
+        raw = INVITE_RAW.replace(
+            "Via: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-test1",
+            "Via: SIP/2.0/UDP [::1]:abc;branch=z9hG4bK-test1;rport",
+        )
+        msg = self._dispatch(raw, ("203.0.113.9", 12345))
+        # Stamped despite the unparseable sent-by port
+        via = msg.via[0]
+        assert via.received == "203.0.113.9"
+        assert via.rport == "12345"
+
 
 # --- TCP background task tracking ---
 

@@ -343,7 +343,10 @@ def parse_uri(s: str) -> SipUri:
             uri.host = hostport[: bracket_end + 1]
             after = hostport[bracket_end + 1 :]
             if after.startswith(":"):
-                uri.port = int(after[1:])
+                try:
+                    uri.port = int(after[1:])
+                except ValueError:
+                    uri.host = hostport
         else:
             uri.host = hostport
     elif ":" in hostport:
@@ -481,7 +484,10 @@ def parse_via(s: str) -> Via:
             via.host = sentby[: bracket_end + 1]
             after = sentby[bracket_end + 1 :]
             if after.startswith(":"):
-                via.port = int(after[1:])
+                try:
+                    via.port = int(after[1:])
+                except ValueError:
+                    via.host = sentby
         else:
             via.host = sentby
     elif ":" in sentby:
