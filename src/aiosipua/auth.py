@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from .headers import AuthChallenge
+    from .message import SipResponse
 
 from .headers import AuthCredentials
 
@@ -118,3 +119,31 @@ def build_credentials(
         params["opaque"] = opaque
 
     return AuthCredentials(scheme="Digest", params=params)
+
+
+def answer_challenge(
+    auth: SipDigestAuth,
+    response: SipResponse,
+    status: int,
+    method: str,
+    uri: str,
+) -> tuple[str, str] | None:
+    """Answer the 401/407 challenge carried by *response* (RFC 3261 §22).
+
+    Returns the ``(header name, header value)`` pair to set on the retried
+    request — ``Authorization`` for a 401, ``Proxy-Authorization`` for a
+    407 — or ``None`` if the challenge cannot be answered.
+    """
+    from .headers import parse_auth, stringify_auth
+
+    challenge_header = "WWW-Authenticate" if status == 401 else "Proxy-Authenticate"
+    challenge_str = response.get_header(challenge_header)
+    if not challenge_str:
+        return None
+
+    credentials = build_credentials(auth, parse_auth(challenge_str), method, uri)
+    if credentials is None:
+        return None
+
+    header_name = "Authorization" if status == 401 else "Proxy-Authorization"
+    return header_name, stringify_auth(credentials)

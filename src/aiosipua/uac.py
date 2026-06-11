@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .auth import SipDigestAuth, build_credentials
+from .auth import SipDigestAuth, answer_challenge
 from .dialog import Dialog, DialogState
 from .outgoing_call import OutgoingCall
 from .sdp import SdpMessage, parse_sdp, serialize_sdp
@@ -22,8 +22,8 @@ from .transaction import TransactionLayer
 from .utils import generate_branch, generate_call_id, generate_tag
 
 if TYPE_CHECKING:
-    from .headers import AuthCredentials
     from .message import SipRequest, SipResponse
+    from .registration import Registration
     from .transport import SipTransport
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,8 @@ class SipUAC:
 
         # Outgoing calls keyed by Call-ID
         self._calls: dict[str, OutgoingCall] = {}
+        # Active registrations keyed by Call-ID (populated by Registration)
+        self._registrations: dict[str, Registration] = {}
 
     def _local_addr(self) -> tuple[str, int]:
         return self.advertised_addr or self.transport.local_addr
@@ -137,6 +139,17 @@ class SipUAC:
             addr: Source address of the response.
         """
         call_id = response.call_id or ""
+        cseq = response.cseq
+
+        # REGISTER responses belong to a Registration, not a call
+        if cseq is not None and cseq.method.upper() == "REGISTER":
+            registration = self._registrations.get(call_id)
+            if registration is not None:
+                registration._handle_response(response)
+            else:
+                logger.debug("REGISTER response for unknown Call-ID: %s", call_id)
+            return
+
         call = self._calls.get(call_id)
         if call is None:
             logger.debug("Response for unknown Call-ID: %s", call_id)
@@ -147,7 +160,6 @@ class SipUAC:
 
         # Only INVITE responses drive call state — a 200 to INFO/BYE must not
         # trigger ACK or answer callbacks
-        cseq = response.cseq
         if cseq is not None and cseq.method.upper() != "INVITE":
             logger.debug("%d for %s %s", response.status_code, cseq.method, call_id)
             return
@@ -408,30 +420,15 @@ class SipUAC:
         status: int,
     ) -> bool:
         """Handle a 401/407 auth challenge. Returns True if retry was sent."""
-        from .headers import parse_auth
-
-        # Pick the right challenge header
-        header_name = "WWW-Authenticate" if status == 401 else "Proxy-Authenticate"
-        challenge_str = response.get_header(header_name)
-        if not challenge_str:
-            return False
-
         assert call._auth is not None  # guaranteed by caller
-        challenge = parse_auth(challenge_str)
-        credentials = build_credentials(call._auth, challenge, "INVITE", call.invite.uri)
-        if credentials is None:
+        auth_header = answer_challenge(call._auth, response, status, "INVITE", call.invite.uri)
+        if auth_header is None:
             return False
 
-        auth_header_name = "Authorization" if status == 401 else "Proxy-Authorization"
-        self._resend_invite_with_auth(call, credentials, auth_header_name)
+        self._resend_invite_with_auth(call, auth_header)
         call._auth_attempts += 1
 
-        logger.info(
-            "Retrying INVITE with %s for %s (realm=%s)",
-            auth_header_name,
-            call.call_id,
-            challenge.params.get("realm", ""),
-        )
+        logger.info("Retrying INVITE with %s for %s", auth_header[0], call.call_id)
         return True
 
     def _build_invite(
@@ -473,19 +470,12 @@ class SipUAC:
 
         return invite
 
-    def _resend_invite_with_auth(
-        self,
-        call: OutgoingCall,
-        credentials: AuthCredentials,
-        auth_header_name: str,
-    ) -> None:
+    def _resend_invite_with_auth(self, call: OutgoingCall, auth_header: tuple[str, str]) -> None:
         """Re-send INVITE with auth credentials (RFC 3261 §22.2)."""
-        from .headers import stringify_auth
-
         invite = self._build_invite(
             call.dialog, sdp_offer=call.sdp_offer, user_agent=call.user_agent
         )
-        invite.headers.set_single(auth_header_name, stringify_auth(credentials))
+        invite.headers.set_single(auth_header[0], auth_header[1])
 
         self.transactions.create_client(invite)
         self.transport.send(invite, call.remote_addr)

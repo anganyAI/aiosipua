@@ -48,6 +48,10 @@ from .message import (
 from .outgoing_call import (
     OutgoingCall,
 )
+from .registration import (
+    Registration,
+    RegistrationState,
+)
 from .rtp_bridge import (
     CallSession,
 )
@@ -112,6 +116,8 @@ __all__ = [
     "MediaDescription",
     "OutgoingCall",
     "Origin",
+    "Registration",
+    "RegistrationState",
     "SdpMessage",
     "SdpNegotiationError",
     "SipDigestAuth",
