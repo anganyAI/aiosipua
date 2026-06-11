@@ -132,6 +132,8 @@ class SipMessage:
             raise ValueError("Empty SIP message")
 
         start_line = lines[0].strip()
+        if not start_line:
+            raise ValueError("Missing start line")
 
         # Unfold continuation lines (RFC 3261 §7.3.1)
         header_lines: list[str] = []
@@ -181,9 +183,9 @@ class SipMessage:
         else:
             # Request: "INVITE sip:bob@example.com SIP/2.0"
             parts = start_line.split(None, 2)
-            method = parts[0] if parts else ""
-            uri = parts[1] if len(parts) > 1 else ""
-            return SipRequest(headers=headers, body=body, method=method, uri=uri)
+            if len(parts) < 3:
+                raise ValueError(f"Malformed request line: {start_line!r}")
+            return SipRequest(headers=headers, body=body, method=parts[0], uri=parts[1])
 
     def serialize(self) -> str:
         """Textual view of the wire format (lossy when the body is binary)."""

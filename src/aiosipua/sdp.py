@@ -317,7 +317,8 @@ def parse_sdp(data: str) -> SdpMessage:
             elif field_type == "o":
                 sdp.origin = _parse_origin(value)
             elif field_type == "s":
-                sdp.session_name = value
+                # RFC 4566 §5.3: a blank session name is spelled " "
+                sdp.session_name = value if value else " "
             elif field_type == "c":
                 sdp.connection = _parse_connection(value)
             elif field_type == "b":
