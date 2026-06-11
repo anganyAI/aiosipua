@@ -133,6 +133,8 @@ class CallSession(_BaseCallSession):
         plc: bool = True,
         cn: bool = False,
         cn_payload_type: int = 13,
+        playout: bool = False,
+        playout_max_delay_ms: int = 200,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
@@ -168,6 +170,11 @@ class CallSession(_BaseCallSession):
         # Comfort noise during silence (RFC 3389) — requires aiortp >= 0.6.0
         self._cn = cn
         self._cn_payload_type = cn_payload_type
+        # Adaptive clocked playout (requires aiortp >= 0.5.0): audio is
+        # delivered on a steady clock with a jitter-tracking buffer depth;
+        # jitter_prefetch only applies when this is off.
+        self._playout = playout
+        self._playout_max_delay_ms = playout_max_delay_ms
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
@@ -228,6 +235,8 @@ class CallSession(_BaseCallSession):
             plc=self._plc,
             cn=self._cn,
             cn_payload_type=self._cn_payload_type,
+            playout=self._playout,
+            playout_max_delay_ms=self._playout_max_delay_ms,
         )
 
         # Wire up callbacks

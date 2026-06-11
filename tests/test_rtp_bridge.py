@@ -233,6 +233,41 @@ class TestCallSessionWithMockedAiortp:
         assert call_kwargs.kwargs["plc"] is False
 
     @pytest.mark.asyncio()
+    async def test_playout_passthrough(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(
+            local_ip="10.0.0.5",
+            rtp_port=30000,
+            offer=offer,
+            playout=True,
+            playout_max_delay_ms=300,
+        )
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["playout"] is True
+        assert call_kwargs.kwargs["playout_max_delay_ms"] == 300
+
+    @pytest.mark.asyncio()
+    async def test_playout_defaults_off(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        call_kwargs = mock_aiortp.RTPSession.create.call_args
+        assert call_kwargs.kwargs["playout"] is False
+
+    @pytest.mark.asyncio()
     async def test_close_closes_rtp_session(self) -> None:
         offer = parse_sdp(BASIC_SDP)
         session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
