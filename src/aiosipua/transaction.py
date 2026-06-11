@@ -1,17 +1,30 @@
 """Simplified SIP transaction layer (RFC 3261 §17).
 
-No retransmission timers — Kamailio handles retransmissions.
-This layer matches responses to requests by Via branch + CSeq method.
+Matches responses to requests by Via branch + CSeq method, and expires
+stale transactions lazily on creation (no event-loop ownership).  The
+RFC 3261 base timers (T1/T2) live here; 2xx retransmission itself is the
+TU's job and is implemented by :class:`aiosipua.incoming_call.IncomingCall`.
 """
 
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .message import SipMessage, SipRequest, SipResponse
+
+# RFC 3261 §17.1.1.1 base timers
+T1 = 0.5
+T2 = 4.0
+TIMER_H = 64 * T1  # give up waiting for ACK after 32 s (§13.3.1.4)
+
+# Lazy-expiry windows (seconds): linger covers Timers B/D/F/M-style cleanup;
+# PROCEEDING is kept much longer because ringing can legitimately last minutes
+LINGER = TIMER_H
+PROCEEDING_MAX = 300.0
 
 
 class TransactionState(enum.Enum):
@@ -32,6 +45,7 @@ class Transaction:
     state: TransactionState = TransactionState.TRYING
     request: SipRequest | None = None
     response: SipResponse | None = None
+    updated_at: float = field(default_factory=time.monotonic, repr=False)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -54,10 +68,12 @@ class Transaction:
                 self.state = TransactionState.TERMINATED
         elif 300 <= status_code <= 699:
             self.state = TransactionState.COMPLETED
+        self.updated_at = time.monotonic()
 
     def terminate(self) -> None:
         """Force-terminate the transaction."""
         self.state = TransactionState.TERMINATED
+        self.updated_at = time.monotonic()
 
 
 def _extract_branch(msg: SipMessage) -> str | None:
@@ -91,11 +107,31 @@ class TransactionLayer:
     request.  Server transactions are created with :meth:`create_server` when
     receiving a request.  Incoming responses are matched with :meth:`match_response`
     and incoming requests are matched with :meth:`match_request`.
+
+    Stale transactions are expired lazily on every create: TERMINATED,
+    COMPLETED, and TRYING entries are dropped after *linger* seconds
+    (covering the RFC 3261 B/D/F/M timer roles), PROCEEDING entries after
+    *proceeding_max* seconds (a ringing INVITE can legitimately stay
+    PROCEEDING for minutes).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, linger: float = LINGER, proceeding_max: float = PROCEEDING_MAX) -> None:
         self._client: dict[tuple[str, str], Transaction] = {}
         self._server: dict[tuple[str, str], Transaction] = {}
+        self._linger = linger
+        self._proceeding_max = proceeding_max
+
+    def _expired(self, txn: Transaction, now: float) -> bool:
+        age = now - txn.updated_at
+        if txn.state == TransactionState.PROCEEDING:
+            return age > self._proceeding_max
+        return age > self._linger
+
+    def _prune_expired(self) -> None:
+        now = time.monotonic()
+        for store in (self._client, self._server):
+            for key in [k for k, v in store.items() if self._expired(v, now)]:
+                del store[key]
 
     # --- Client transactions ---
 
@@ -107,6 +143,7 @@ class TransactionLayer:
         Raises:
             ValueError: If the request has no Via branch.
         """
+        self._prune_expired()
         branch = _extract_branch(request)
         if not branch:
             raise ValueError("Request has no Via branch parameter")
@@ -141,6 +178,7 @@ class TransactionLayer:
         Raises:
             ValueError: If the request has no Via branch.
         """
+        self._prune_expired()
         branch = _extract_branch(request)
         if not branch:
             raise ValueError("Request has no Via branch parameter")

@@ -7,7 +7,7 @@ import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from .headers import parse_via, stringify_via
 from .message import SipMessage, SipRequest, SipResponse
@@ -77,6 +77,10 @@ def _response_destination(msg: SipResponse) -> tuple[str, int] | None:
 @dataclass
 class SipTransport:
     """Base class for SIP transports."""
+
+    # Reliable transports (TCP/TLS) deliver without retransmission; the UAS
+    # uses this to decide whether 2xx responses need TU-level retransmission
+    reliable: ClassVar[bool] = False
 
     local_addr: tuple[str, int] = ("0.0.0.0", 5060)
     on_message: MessageCallback | None = None
@@ -175,6 +179,8 @@ class UdpSipTransport(SipTransport):
 @dataclass
 class TcpSipTransport(SipTransport):
     """TCP SIP transport — Content-Length framing for message boundaries."""
+
+    reliable: ClassVar[bool] = True
 
     _server: asyncio.Server | None = field(default=None, init=False, repr=False)
     _connections: dict[tuple[str, int], tuple[asyncio.StreamReader, asyncio.StreamWriter]] = field(

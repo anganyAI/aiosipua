@@ -16,7 +16,7 @@ from .dialog import Dialog, DialogState, create_dialog_from_request
 from .incoming_call import IncomingCall
 from .message import SipRequest, SipResponse
 from .sdp import SdpMessage, parse_sdp
-from .transaction import TransactionLayer
+from .transaction import TransactionLayer, TransactionState
 from .utils import generate_tag
 
 if TYPE_CHECKING:
@@ -81,6 +81,7 @@ class SipUAS:
         user_agent: str | None = None,
         uac: SipUAC | None = None,
         advertised_addr: tuple[str, int] | None = None,
+        retransmit_2xx: bool | None = None,
     ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
@@ -88,6 +89,11 @@ class SipUAS:
         self.uac: SipUAC | None = uac
         # Address advertised in Via/Contact (NAT: bind on private, signal public)
         self.advertised_addr = advertised_addr
+        # 2xx retransmission until ACK (RFC 3261 §13.3.1.4) — defaults to the
+        # transport's reliability: on for UDP, off for TCP
+        if retransmit_2xx is None:
+            retransmit_2xx = not getattr(transport, "reliable", True)
+        self.retransmit_2xx = retransmit_2xx
 
         # Callbacks
         self.on_invite: InviteCallback | None = None
@@ -95,6 +101,7 @@ class SipUAS:
         self.on_reinvite: InviteCallback | None = None
         self.on_cancel: RequestCallback | None = None
         self.on_options: RequestCallback | None = None
+        self.on_ack_timeout: InviteCallback | None = None
 
         # Active calls keyed by call-id
         self._calls: dict[str, IncomingCall] = {}
@@ -119,7 +126,9 @@ class SipUAS:
         await self.transport.start()
 
     async def stop(self) -> None:
-        """Stop the UAS and close the transport."""
+        """Stop the UAS: cancel pending 2xx retransmissions and close the transport."""
+        for call in self._calls.values():
+            call._stop_2xx_retransmission()
         await self.transport.stop()
 
     def _on_message(self, msg: SipRequest | SipResponse, addr: tuple[str, int]) -> None:
@@ -207,11 +216,15 @@ class SipUAS:
         # New INVITE — create dialog
         dialog = create_dialog_from_request(request)
 
-        # Track the INVITE server transaction so CANCEL can match by branch
+        # Track the INVITE server transaction so CANCEL can match by branch.
+        # PROCEEDING (we auto-send 100 Trying below) keeps it out of the
+        # transaction layer's lazy expiry while the call is ringing.
         try:
-            self.transactions.create_server(request)
+            txn = self.transactions.create_server(request)
         except ValueError:
             logger.warning("INVITE without Via branch from %s — CANCEL matching disabled", addr)
+        else:
+            txn.state = TransactionState.PROCEEDING
 
         # Parse SDP offer from body
         sdp_offer = None
@@ -226,6 +239,8 @@ class SipUAS:
             source_addr=addr,
             user_agent=self.user_agent,
             advertised_addr=self.advertised_addr,
+            retransmit_2xx=self.retransmit_2xx,
+            on_ack_timeout=self._dispatch_ack_timeout,
         )
 
         self._calls[call_id] = call
@@ -244,12 +259,21 @@ class SipUAS:
         if call is None or not _dialog_matches(call.dialog, request):
             return
 
+        call._stop_2xx_retransmission()
         if call.dialog.state == DialogState.TERMINATED:
             # ACK to our error response — the INVITE transaction is over
             self._calls.pop(call_id, None)
         else:
             call.dialog.confirm()
         self._remove_invite_transaction(call.invite)
+
+    def _dispatch_ack_timeout(self, call: IncomingCall) -> None:
+        """A 2xx was never ACKed — release the call (RFC 3261 §13.3.1.4)."""
+        self._calls.pop(call.call_id, None)
+        self._remove_invite_transaction(call.invite)
+        logger.warning("No ACK for 2xx on %s — call released", call.call_id)
+        if self.on_ack_timeout is not None:
+            self.on_ack_timeout(call)
 
     def _handle_bye(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming BYE (terminates a call)."""
@@ -259,6 +283,7 @@ class SipUAS:
         if call is not None:
             if not self._validate_in_dialog(call.dialog, request):
                 return
+            call._stop_2xx_retransmission()
             self._remove_invite_transaction(call.invite)
 
         # Check UAC's calls for outbound dialogs
@@ -328,6 +353,7 @@ class SipUAS:
         if not call._answered:
             call.reject(487, "Request Terminated")
 
+        call._stop_2xx_retransmission()
         self._calls.pop(call.call_id, None)
         if txn is not None:
             self.transactions.remove(txn)

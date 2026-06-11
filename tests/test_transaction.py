@@ -213,3 +213,65 @@ class TestTransactionLayerCleanup:
         layer = TransactionLayer()
         layer.create_client(_make_invite())
         assert layer.prune_terminated() == 0
+
+
+class TestLazyExpiry:
+    """Stale transactions are pruned on create (RFC 3261 timer roles B/D/F/M)."""
+
+    def test_terminated_pruned_after_linger(self) -> None:
+        layer = TransactionLayer(linger=0.0)
+        txn = layer.create_client(_make_invite())
+        txn.terminate()
+
+        layer.create_client(_make_register())
+
+        assert txn.key not in layer.client_transactions
+
+    def test_completed_pruned_after_linger(self) -> None:
+        layer = TransactionLayer(linger=0.0)
+        txn = layer.create_client(_make_invite())
+        txn.update_state(486)  # COMPLETED
+        assert txn.state == TransactionState.COMPLETED
+
+        layer.create_client(_make_register())
+
+        assert txn.key not in layer.client_transactions
+
+    def test_trying_pruned_after_linger(self) -> None:
+        """A transaction that never got any response dies after the linger window."""
+        layer = TransactionLayer(linger=0.0)
+        txn = layer.create_client(_make_invite())
+        assert txn.state == TransactionState.TRYING
+
+        layer.create_client(_make_register())
+
+        assert txn.key not in layer.client_transactions
+
+    def test_proceeding_survives_linger(self) -> None:
+        """Ringing can last minutes — PROCEEDING is exempt from the linger window."""
+        layer = TransactionLayer(linger=0.0, proceeding_max=100.0)
+        txn = layer.create_client(_make_invite())
+        txn.update_state(180)
+        assert txn.state == TransactionState.PROCEEDING
+
+        layer.create_client(_make_register())
+
+        assert txn.key in layer.client_transactions
+
+    def test_proceeding_pruned_after_max(self) -> None:
+        layer = TransactionLayer(linger=100.0, proceeding_max=0.0)
+        txn = layer.create_client(_make_invite())
+        txn.update_state(180)
+
+        layer.create_client(_make_register())
+
+        assert txn.key not in layer.client_transactions
+
+    def test_server_transactions_pruned_too(self) -> None:
+        layer = TransactionLayer(linger=0.0)
+        txn = layer.create_server(_make_invite())
+        txn.terminate()
+
+        layer.create_server(_make_register())
+
+        assert txn.key not in layer.server_transactions
