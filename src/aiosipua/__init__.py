@@ -48,6 +48,9 @@ from .message import (
 from .outgoing_call import (
     OutgoingCall,
 )
+from .refer import (
+    notify_refer,
+)
 from .registration import (
     Registration,
     RegistrationState,
@@ -146,6 +149,7 @@ __all__ = [
     "negotiate_av_sdp",
     "negotiate_sdp",
     "negotiate_video_sdp",
+    "notify_refer",
     "parse_address",
     "parse_auth",
     "parse_cseq",

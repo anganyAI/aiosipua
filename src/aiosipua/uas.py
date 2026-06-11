@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from .dialog import (
@@ -21,6 +22,7 @@ from .dialog import (
 )
 from .incoming_call import IncomingCall
 from .message import SipRequest, SipResponse
+from .refer import handle_notify, handle_refer
 from .sdp import SdpMessage, parse_sdp, serialize_sdp
 from .transaction import TransactionLayer, TransactionState
 from .utils import generate_tag
@@ -37,8 +39,12 @@ ByeCallback = Callable[["IncomingCall", SipRequest], Any]
 RequestCallback = Callable[[SipRequest, "tuple[str, int]"], Any]
 # UPDATE handler: returns the SDP answer when the UPDATE carries an offer
 UpdateCallback = Callable[["IncomingCall", SipRequest], "SdpMessage | None"]
+# REFER handler: (call, refer-to URI)
+ReferCallback = Callable[["IncomingCall", str], Any]
+# Transfer progress: (call_id, sipfrag status, reason)
+TransferProgressCallback = Callable[[str, int, str], Any]
 
-_ALLOWED_METHODS = "INVITE, ACK, PRACK, BYE, CANCEL, OPTIONS, UPDATE"
+_ALLOWED_METHODS = "INVITE, ACK, PRACK, BYE, CANCEL, OPTIONS, UPDATE, REFER, NOTIFY"
 
 
 class SipUAS:
@@ -84,6 +90,8 @@ class SipUAS:
         self.on_cancel: RequestCallback | None = None
         self.on_options: RequestCallback | None = None
         self.on_update: UpdateCallback | None = None
+        self.on_refer: ReferCallback | None = None
+        self.on_transfer_progress: TransferProgressCallback | None = None
         self.on_ack_timeout: InviteCallback | None = None
         self.on_prack_timeout: InviteCallback | None = None
 
@@ -99,6 +107,8 @@ class SipUAS:
             "CANCEL": self._handle_cancel,
             "OPTIONS": self._handle_options,
             "UPDATE": self._handle_update,
+            "REFER": partial(handle_refer, self),
+            "NOTIFY": partial(handle_notify, self),
         }
 
     @property
@@ -154,6 +164,44 @@ class SipUAS:
             return
         handler(request, addr)
 
+    def _find_dialog(self, call_id: str) -> tuple[IncomingCall | None, Dialog | None]:
+        """Locate the dialog for an in-dialog request.
+
+        Returns ``(call, dialog)``: the call is ``None`` when the dialog
+        belongs to an outbound call tracked by the UAC.
+        """
+        call = self._calls.get(call_id)
+        if call is not None:
+            return call, call.dialog
+        if self.uac is not None:
+            uac_call = self.uac.get_call(call_id)
+            if uac_call is not None:
+                return None, uac_call.dialog
+        return None, None
+
+    def _wrap_uac_dialog(self, request: SipRequest, addr: tuple[str, int]) -> IncomingCall:
+        """Wrap an in-dialog request on an outbound call's dialog in an IncomingCall.
+
+        Gives handlers the same respond-through-the-call interface for
+        requests arriving on dialogs the UAC initiated.
+        """
+        dialog = create_dialog_from_request(request)
+        dialog.confirm()  # outbound dialog is already confirmed
+        sdp_offer: SdpMessage | None = None
+        if request.body and request.content_type == "application/sdp":
+            sdp_offer = parse_sdp(request.body)
+        wrapper = IncomingCall(
+            dialog=dialog,
+            invite=request,
+            sdp_offer=sdp_offer,
+            transport=self.transport,
+            source_addr=addr,
+            user_agent=self.user_agent,
+            advertised_addr=self.advertised_addr,
+        )
+        wrapper._answered = True  # prevent reject(487) on CANCEL
+        return wrapper
+
     def _handle_invite(self, request: SipRequest, addr: tuple[str, int]) -> None:
         """Handle an incoming INVITE (new call or re-INVITE)."""
         call_id = request.call_id or ""
@@ -177,25 +225,8 @@ class SipUAS:
             uac_dialog = self.uac._calls[call_id].dialog
             if not self._validate_in_dialog(uac_dialog, request):
                 return
-            # Build an IncomingCall wrapper so the re-INVITE handler can
-            # send responses (accept/reject) through the same interface.
-            dialog = create_dialog_from_request(request)
-            dialog.confirm()  # outbound dialog is already confirmed
-            sdp_offer: SdpMessage | None = None
-            if request.body and request.content_type == "application/sdp":
-                sdp_offer = parse_sdp(request.body)
-            wrapper = IncomingCall(
-                dialog=dialog,
-                invite=request,
-                sdp_offer=sdp_offer,
-                transport=self.transport,
-                source_addr=addr,
-                user_agent=self.user_agent,
-                advertised_addr=self.advertised_addr,
-            )
-            wrapper._answered = True  # prevent reject(487) on CANCEL
             if self.on_reinvite is not None:
-                self.on_reinvite(wrapper)
+                self.on_reinvite(self._wrap_uac_dialog(request, addr))
             return
 
         # New INVITE — create dialog
@@ -304,18 +335,8 @@ class SipUAS:
             uac_dialog = self.uac._calls[call_id].dialog
             if not self._validate_in_dialog(uac_dialog, request):
                 return
-            # Build a wrapper so on_bye callback has the same interface
-            dialog = create_dialog_from_request(request)
-            dialog.confirm()
-            call = IncomingCall(
-                dialog=dialog,
-                invite=request,
-                transport=self.transport,
-                source_addr=addr,
-                user_agent=self.user_agent,
-                advertised_addr=self.advertised_addr,
-            )
-            call._answered = True
+            # Wrap so the on_bye callback has the same interface
+            call = self._wrap_uac_dialog(request, addr)
             # Remove from UAC tracking
             self.uac._calls.pop(call_id, None)
 
@@ -382,13 +403,8 @@ class SipUAS:
         ``on_update``, or rejected with 488 when no handler answers.
         """
         call_id = request.call_id or ""
-        call = self._calls.get(call_id)
-
         # UPDATE on an outbound call's dialog: refresh only (no renegotiation)
-        dialog: Dialog | None = call.dialog if call else None
-        if dialog is None and self.uac is not None:
-            uac_call = self.uac.get_call(call_id)
-            dialog = uac_call.dialog if uac_call else None
+        call, dialog = self._find_dialog(call_id)
 
         if dialog is None:
             self._send_error(request, 481, "Call/Transaction Does Not Exist")

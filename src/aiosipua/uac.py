@@ -245,6 +245,39 @@ class SipUAC:
             dialog, "UPDATE", remote_addr, body=body, content_type=content_type
         )
 
+    def send_refer(
+        self,
+        dialog: Dialog,
+        refer_to: str,
+        remote_addr: tuple[str, int],
+    ) -> SipRequest:
+        """Send a REFER for a blind transfer (RFC 3515).
+
+        The remote party is asked to call *refer_to*; it reports progress
+        with ``Event: refer`` NOTIFYs, surfaced through the UAS's
+        ``on_transfer_progress`` callback.
+
+        Args:
+            dialog: The confirmed dialog.
+            refer_to: Transfer target URI (e.g. ``"sip:agent@example.com"``).
+            remote_addr: Address to send the REFER to.
+
+        Returns:
+            The REFER request that was sent.
+
+        Raises:
+            ValueError: If the dialog is not in CONFIRMED state.
+        """
+        if dialog.state != DialogState.CONFIRMED:
+            raise ValueError(
+                f"Cannot send REFER: dialog is {dialog.state.value}, expected confirmed"
+            )
+
+        target = refer_to if refer_to.startswith("<") else f"<{refer_to}>"
+        return self._send_in_dialog(
+            dialog, "REFER", remote_addr, extra_headers={"Refer-To": target}
+        )
+
     def send_cancel(self, call: OutgoingCall) -> SipRequest:
         """Send a CANCEL for a pending INVITE (RFC 3261 §9.1).
 
@@ -341,8 +374,9 @@ class SipUAC:
         body: str = "",
         content_type: str = "",
         contact: bool = True,
+        extra_headers: dict[str, str] | None = None,
     ) -> SipRequest:
-        """Build and send an in-dialog request (shared by BYE/re-INVITE/UPDATE/INFO)."""
+        """Build and send an in-dialog request (shared by BYE/re-INVITE/UPDATE/INFO/REFER)."""
         addr = self._local_addr()
         request = dialog.create_request(method, via_host=addr[0], via_port=addr[1])
         if contact:
@@ -350,6 +384,9 @@ class SipUAC:
         if body:
             request.body = body
             request.headers.set_single("Content-Type", content_type)
+        if extra_headers:
+            for name, value in extra_headers.items():
+                request.headers.set_single(name, value)
         self.transport.send(request, remote_addr)
         return request
 
