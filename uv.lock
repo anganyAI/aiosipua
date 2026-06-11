@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "aiosipua"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -31,7 +31,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "aiortp", marker = "extra == 'rtp'", specifier = ">=0.5.0" }]
+requires-dist = [{ name = "aiortp", marker = "extra == 'rtp'", specifier = ">=0.6.0" }]
 provides-extras = ["rtp"]
 
 [package.metadata.requires-dev]
