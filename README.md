@@ -11,25 +11,39 @@ SIP stack. Zero runtime dependencies, strict type hints, Python 3.11+.
 ## Features
 
 - **SIP message parsing and serialization** — RFC 3261 compliant, compact header
-  expansion, multi-value header splitting, structured accessors
-- **SDP parsing, building, and negotiation** — RFC 4566 / RFC 3264, codec
-  selection, DTMF, direction handling, bandwidth support
+  expansion, multi-value header splitting, structured accessors; bodies are raw
+  bytes with a `.text` view, so binary payloads survive intact
+- **Hardened parsing** — header-injection guards, header/body size caps,
+  required-header validation (400/drop), RFC 4475 torture-tested and
+  property-tested with hypothesis
+- **SDP parsing, building, and negotiation** — RFC 4566 / RFC 3264 (answers
+  mirror every offered m-line), codec selection, DTMF, direction handling
 - **Video SDP negotiation** — `negotiate_video_sdp`, `negotiate_av_sdp` for
   combined audio+video, `build_video_sdp` for outgoing video offers
-- **Transports** — UDP (`DatagramProtocol`) and TCP (Content-Length framing)
-- **UAS** — incoming call handling with INVITE/BYE/CANCEL/OPTIONS dispatch,
-  auto 100 Trying, `IncomingCall` high-level API
-- **UAC** — outbound INVITE with `send_invite`, backend-initiated BYE,
-  re-INVITE (hold/unhold), CANCEL, INFO (DTMF)
-- **SIP digest authentication** — automatic 401/407 retry with
-  `SipDigestAuth` for outbound calls
+- **Transports** — UDP (`DatagramProtocol`) and TCP (Content-Length framing),
+  IPv4 and IPv6, `received`/`rport` handling (RFC 3581)
+- **UAS** — INVITE/re-INVITE/BYE/CANCEL/OPTIONS/UPDATE/PRACK/REFER/NOTIFY
+  dispatch, auto 100 Trying, dialog validation (tags + CSeq),
+  `IncomingCall` high-level API
+- **UAC** — outbound INVITE with `send_invite`, BYE, re-INVITE (hold/unhold),
+  RFC-compliant CANCEL, UPDATE, REFER, INFO (DTMF)
+- **Reliability** — 200 OK retransmitted until ACK over UDP (RFC 3261
+  §13.3.1.4), reliable provisionals with PRACK/100rel (RFC 3262), automatic
+  transaction expiry
+- **Session timers** — dead-call detection via UPDATE refreshes and expiry
+  watchdogs (RFC 4028), negotiated on both sides
+- **REGISTER client** — auto-refresh before expiry, 423 Min-Expires handling,
+  expiry watchdog (RFC 3261 §10)
+- **Blind transfer** — REFER with implicit-subscription NOTIFYs and
+  transfer-progress callbacks (RFC 3515)
+- **SIP digest authentication** — RFC 7616 (qop, MD5 and SHA-256), automatic
+  401/407 retry for INVITE and REGISTER
 - **Dialog management** — RFC 3261 dialog state machine, Record-Route support,
   in-dialog request/response creation
-- **Transaction matching** — client and server transaction layer
 - **aiortp bridge** — `CallSession` for audio RTP and `VideoCallSession` for
   video RTP, bridging SDP negotiation to media with callbacks
-- **NAT traversal** — `advertised_ip` parameter on SDP functions and bridge
-  sessions to advertise a public IP in SDP while binding RTP to a private address
+- **NAT traversal** — `advertised_ip` for SDP and `advertised_addr` for
+  Via/Contact: bind privately, signal publicly
 - **X-header support** — pass application metadata (room ID, session ID, tenant)
   through SIP headers
 
@@ -81,8 +95,8 @@ print(msg.via[0].branch)           # "z9hG4bK776asdhds"
 print(msg.cseq.method)             # "INVITE"
 print(msg.call_id)                 # "a84b4c76e66710@example.com"
 
-# Parse the SDP body
-sdp = parse_sdp(msg.body)
+# Parse the SDP body (message bodies are bytes; .text is the UTF-8 view)
+sdp = parse_sdp(msg.text)
 audio = sdp.audio
 print(audio.port)                  # 20000
 print(audio.codecs[0].encoding_name)  # "PCMU"
@@ -287,6 +301,42 @@ call = uac.send_invite(
     remote_addr=("proxy.example.com", 5060),
     sdp=sdp,
     auth=auth,  # auto-retries on 401/407
+)
+```
+
+### Register with a registrar
+
+```python
+from aiosipua import Registration, SipDigestAuth, SipUAC
+from aiosipua.transport import UdpSipTransport
+
+transport = UdpSipTransport(local_addr=("0.0.0.0", 5060))
+uac = SipUAC(transport)
+
+reg = Registration(
+    uac,
+    "sip:alice@example.com",
+    ("registrar.example.com", 5060),
+    auth=SipDigestAuth("alice", "secret"),
+    expires=300,
+)
+reg.on_registered = lambda r: print(f"registered for {r.granted_expires}s")
+reg.register()   # refreshes itself until reg.unregister()
+```
+
+### Blind transfer and session timers
+
+```python
+# Ask the remote party to call an agent (RFC 3515); progress arrives as NOTIFYs
+uac.send_refer(call.dialog, "sip:agent@example.com", remote_addr)
+uas.on_transfer_progress = lambda call_id, status, reason: print(status, reason)
+
+# Dead-call detection (RFC 4028): UAS side negotiates timers on incoming calls,
+# UAC side requests them on outgoing ones
+uas = SipUAS(transport, session_expires=1800)
+call = uac.send_invite(
+    "sip:me@example.com", "sip:them@example.com", remote_addr,
+    sdp_offer=sdp, session_expires=1800,
 )
 ```
 
