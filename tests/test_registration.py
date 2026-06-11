@@ -11,28 +11,7 @@ from aiosipua.auth import SipDigestAuth
 from aiosipua.message import SipMessage, SipRequest, SipResponse
 from aiosipua.registration import Registration, RegistrationState
 from aiosipua.uac import SipUAC
-
-
-class FakeTransport:
-    """Minimal SipTransport stand-in that captures sent messages."""
-
-    def __init__(self, local_addr: tuple[str, int] = ("10.0.0.2", 5060)) -> None:
-        self.local_addr = local_addr
-        self.on_message = None
-        self.sent: list[tuple[SipRequest | SipResponse, tuple[str, int]]] = []
-
-    async def start(self) -> None:
-        pass
-
-    async def stop(self) -> None:
-        pass
-
-    def send(self, message: SipRequest | SipResponse, addr: tuple[str, int]) -> None:
-        self.sent.append((message, addr))
-
-    def send_reply(self, response: SipResponse) -> None:
-        self.sent.append((response, ("0.0.0.0", 0)))
-
+from tests.support import FakeTransport
 
 REGISTRAR = ("10.0.0.1", 5060)
 

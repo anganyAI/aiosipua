@@ -7,39 +7,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from aiosipua.dialog import DialogState
-from aiosipua.message import SipMessage, SipRequest, SipResponse
+from aiosipua.message import SipResponse
 from aiosipua.sdp import build_sdp, parse_sdp
 from aiosipua.uac import SipUAC
 from aiosipua.uas import SipUAS
+from tests.support import FakeTransport
 
 if TYPE_CHECKING:
     from aiosipua.incoming_call import IncomingCall
-
-
-class FakeTransport:
-    """Minimal SipTransport stand-in that captures sent messages."""
-
-    def __init__(self, local_addr: tuple[str, int] = ("10.0.0.2", 5060)) -> None:
-        self.local_addr = local_addr
-        self.on_message = None
-        self.sent: list[tuple[SipRequest | SipResponse, tuple[str, int]]] = []
-
-    async def start(self) -> None:
-        pass
-
-    async def stop(self) -> None:
-        pass
-
-    def send(self, message: SipRequest | SipResponse, addr: tuple[str, int]) -> None:
-        self.sent.append((message, addr))
-
-    def send_reply(self, response: SipResponse) -> None:
-        self.sent.append((response, ("0.0.0.0", 0)))
-
-    def inject(self, raw: str, addr: tuple[str, int] = ("10.0.0.1", 5060)) -> None:
-        msg = SipMessage.parse(raw)
-        if self.on_message is not None:
-            self.on_message(msg, addr)
 
 
 REMOTE_ADDR = ("10.0.0.1", 5060)

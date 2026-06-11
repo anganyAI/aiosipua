@@ -59,15 +59,16 @@ ReferCallback = Callable[["IncomingCall", str], Any]
 # Transfer progress: (call_id, sipfrag status, reason)
 TransferProgressCallback = Callable[[str, int, str], Any]
 
-_ALLOWED_METHODS = "INVITE, ACK, PRACK, BYE, CANCEL, OPTIONS, UPDATE, REFER, NOTIFY"
-
 
 class SipUAS:
     """SIP User Agent Server — listens for incoming requests.
 
-    Dispatches INVITE, BYE, CANCEL, re-INVITE, and OPTIONS requests
-    through registered callbacks.  Automatically sends 100 Trying for
-    new INVITEs.
+    Dispatches INVITE (new call and re-INVITE), ACK, PRACK, BYE, CANCEL,
+    OPTIONS, UPDATE, REFER, and NOTIFY through registered callbacks, and
+    automatically sends 100 Trying for new INVITEs.  Optional behaviours:
+    2xx retransmission until ACK (``retransmit_2xx``, on by default over
+    UDP), session timers (``session_expires``, RFC 4028), and an
+    advertised signaling address for NAT (``advertised_addr``).
 
     Usage::
 
@@ -396,7 +397,7 @@ class SipUAS:
         if cseq:
             resp.headers.set_single("CSeq", cseq)
 
-        resp.headers.set_single("Allow", _ALLOWED_METHODS)
+        resp.headers.set_single("Allow", ", ".join(self._handlers))
         if self.user_agent:
             resp.headers.set_single("User-Agent", self.user_agent)
 
