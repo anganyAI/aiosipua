@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from .dialog import Dialog
     from .message import SipRequest
     from .sdp import SdpMessage
+    from .session_timer import SessionTimer
     from .transport import SipTransport
     from .uac import SipUAC
 
@@ -57,10 +58,16 @@ class OutgoingCall:
     # Highest RSeq already acknowledged with a PRACK (RFC 3262)
     _last_pracked_rseq: int = field(default=0, init=False, repr=False)
 
+    # Session timers (RFC 4028)
+    _session_expires_requested: int | None = field(default=None, init=False, repr=False)
+    _se_retried: bool = field(default=False, init=False, repr=False)
+    _session_timer: SessionTimer | None = field(default=None, init=False, repr=False)
+
     # Callbacks (optional)
     on_ringing: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
     on_answer: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
     on_rejected: Callable[[OutgoingCall, int, str], Any] | None = field(default=None, repr=False)
+    on_session_expired: Callable[[OutgoingCall], Any] | None = field(default=None, repr=False)
 
     @property
     def call_id(self) -> str:
@@ -104,6 +111,12 @@ class OutgoingCall:
         finally:
             answered.cancel()
             rejected.cancel()
+
+    def _cancel_session_timer(self) -> None:
+        """Stop the RFC 4028 timer (call torn down)."""
+        if self._session_timer is not None:
+            self._session_timer.cancel()
+            self._session_timer = None
 
     def cancel(self, uac: SipUAC) -> SipRequest | None:
         """Cancel the outgoing call (sends CANCEL if dialog is EARLY).

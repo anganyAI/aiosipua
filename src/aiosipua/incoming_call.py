@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .dialog import Dialog
     from .message import SipRequest, SipResponse
     from .sdp import SdpMessage
+    from .session_timer import SessionTimer
     from .transport import SipTransport
 
 
@@ -46,13 +47,19 @@ class IncomingCall:
     user_agent: str | None = field(default=None, repr=False)
     advertised_addr: tuple[str, int] | None = field(default=None, repr=False)
     retransmit_2xx: bool = field(default=False, repr=False)
+    # Session timers (RFC 4028): negotiated interval and refresher role
+    session_interval: int | None = field(default=None, repr=False)
+    session_refresher_us: bool = field(default=True, repr=False)
     on_ack_timeout: Callable[[IncomingCall], Any] | None = field(default=None, repr=False)
     on_prack_timeout: Callable[[IncomingCall], Any] | None = field(default=None, repr=False)
+    # Our SDP answer, recorded by accept()
+    sdp_answer: SdpMessage | None = field(default=None, init=False, repr=False)
     _answered: bool = field(default=False, init=False, repr=False)
     _retrans_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _reliable_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _rseq: int = field(default=0, init=False, repr=False)
     _pending_rseq: int | None = field(default=None, init=False, repr=False)
+    _session_timer: SessionTimer | None = field(default=None, init=False, repr=False)
 
     @property
     def call_id(self) -> str:
@@ -92,11 +99,15 @@ class IncomingCall:
         """Send a 100 Trying response."""
         self._send_response(100, "Trying")
 
+    def _caller_supports(self, token: str) -> bool:
+        """Whether the caller advertised *token* in Supported/Require."""
+        tokens = self.invite.headers.get("supported") + self.invite.headers.get("require")
+        return token in (t.strip().lower() for t in tokens)
+
     @property
     def supports_100rel(self) -> bool:
         """Whether the caller advertised 100rel support (RFC 3262)."""
-        tokens = self.invite.headers.get("supported") + self.invite.headers.get("require")
-        return "100rel" in (t.strip().lower() for t in tokens)
+        return self._caller_supports("100rel")
 
     def ringing(self, *, early_sdp: SdpMessage | None = None, reliable: bool = False) -> None:
         """Send a 180 Ringing response, optionally with early media SDP.
@@ -159,7 +170,18 @@ class IncomingCall:
         if sdp_answer is not None:
             body = serialize_sdp(sdp_answer)
             content_type = "application/sdp"
-        resp = self._send_response(200, "OK", body=body, content_type=content_type)
+
+        extra: dict[str, str] = {}
+        if self.session_interval:
+            refresher = "uas" if self.session_refresher_us else "uac"
+            extra["Session-Expires"] = f"{self.session_interval};refresher={refresher}"
+            if self._caller_supports("timer"):
+                extra["Require"] = "timer"
+
+        resp = self._send_response(
+            200, "OK", body=body, content_type=content_type, extra_headers=extra or None
+        )
+        self.sdp_answer = sdp_answer
         self.dialog.confirm()
         self._answered = True
         if self.retransmit_2xx and resp is not None:
@@ -313,6 +335,9 @@ class IncomingCall:
             self._reliable_task = None
 
     def _stop_retransmissions(self) -> None:
-        """Stop every pending retransmission (call torn down)."""
+        """Stop every pending retransmission and timer (call torn down)."""
         self._stop_2xx_retransmission()
         self._stop_reliable_retransmission()
+        if self._session_timer is not None:
+            self._session_timer.cancel()
+            self._session_timer = None

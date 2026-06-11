@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from .auth import answer_challenge
 from .sdp import parse_sdp
+from .session_timer import SessionTimer, parse_session_expires, peer_allows_update
 from .utils import generate_branch
 
 if TYPE_CHECKING:
@@ -81,12 +82,17 @@ def process_response(uac: SipUAC, response: SipResponse, addr: tuple[str, int]) 
 
         if first_answer:
             call._answered.set()
+            _start_session_timer(uac, call, response)
             logger.info("Call answered: %s", call_id)
             if call.on_answer is not None:
                 call.on_answer(call)
         else:
             # 2xx to a re-INVITE: ACK only, no answer callback replay
             logger.info("re-INVITE answered: %s", call_id)
+
+    elif status == 422 and call._session_expires_requested and not call._se_retried:
+        # Session Interval Too Small — retry with the registrar's Min-SE (RFC 4028 §6)
+        _retry_invite_min_se(uac, call, response)
 
     elif status in (401, 407) and call._auth is not None and call._auth_attempts == 0:
         # Auth challenge — retry with credentials, else fall through to rejection
@@ -103,6 +109,7 @@ def _reject_call(uac: SipUAC, call: OutgoingCall, status: int, reason: str) -> N
     call._reject_reason = reason
     call.dialog.terminate()
     call._rejected.set()
+    call._cancel_session_timer()
 
     logger.info("Call rejected: %s (%d %s)", call.call_id, status, reason)
     if call.on_rejected is not None:
@@ -156,6 +163,7 @@ def _retry_invite_with_auth(
         return False
 
     invite = uac._build_invite(call.dialog, sdp_offer=call.sdp_offer, user_agent=call.user_agent)
+    apply_session_headers(call, invite)
     invite.headers.set_single(auth_header[0], auth_header[1])
 
     uac.transactions.create_client(invite)
@@ -230,3 +238,76 @@ def _send_ack(uac: SipUAC, call: OutgoingCall, response: SipResponse) -> SipRequ
 
     logger.debug("Sent ACK for %s", call.dialog.call_id)
     return ack
+
+
+# --- Session timers, UAC side (RFC 4028) ---
+
+
+def apply_session_headers(call: OutgoingCall, invite: SipRequest) -> None:
+    """Stamp the session-timer headers on an INVITE (initial or retried)."""
+    if not call._session_expires_requested:
+        return
+    invite.headers.set_single("Supported", "100rel, timer")
+    invite.headers.set_single("Session-Expires", str(call._session_expires_requested))
+
+
+def _retry_invite_min_se(uac: SipUAC, call: OutgoingCall, response: SipResponse) -> None:
+    """Answer a 422 by retrying the INVITE with the server's Min-SE (RFC 4028 §6)."""
+    raw = response.get_header("min-se") or ""
+    try:
+        min_se = int(raw.strip())
+    except ValueError:
+        min_se = 0
+    requested = call._session_expires_requested or 0
+    if min_se <= requested:
+        _reject_call(uac, call, 422, response.reason_phrase)
+        return
+
+    call._se_retried = True
+    call._session_expires_requested = min_se
+
+    invite = uac._build_invite(call.dialog, sdp_offer=call.sdp_offer, user_agent=call.user_agent)
+    apply_session_headers(call, invite)
+    invite.headers.set_single("Min-SE", str(min_se))
+    uac.transactions.create_client(invite)
+    uac.transport.send(invite, call.remote_addr)
+    call.invite = invite
+    logger.info("Retrying INVITE with Session-Expires %d for %s", min_se, call.call_id)
+
+
+def _start_session_timer(uac: SipUAC, call: OutgoingCall, response: SipResponse) -> None:
+    """Arm the RFC 4028 timer from the 2xx's Session-Expires, if any."""
+    se_raw = response.get_header("session-expires")
+    if not se_raw:
+        return
+    interval, refresher = parse_session_expires(se_raw)
+    if interval <= 0:
+        return
+
+    # Per RFC 4028 §7.2 the 2xx names the refresher; absent, the requester
+    # (us) refreshes
+    we_refresh = refresher != "uas"
+    update_ok = peer_allows_update(response.headers.get("allow"))
+
+    def refresh() -> None:
+        if update_ok:
+            uac._send_in_dialog(
+                call.dialog,
+                "UPDATE",
+                call.remote_addr,
+                extra_headers={"Session-Expires": f"{interval};refresher=uac"},
+            )
+        elif call.sdp_offer is not None:
+            # Peer has no UPDATE — refresh through a re-INVITE with our offer
+            uac.send_reinvite(call.dialog, call.sdp_offer, call.remote_addr)
+
+    def expire() -> None:
+        logger.warning("Session expired on %s — BYE sent", call.call_id)
+        uac.send_bye(call.dialog, call.remote_addr)
+        if call.on_session_expired is not None:
+            call.on_session_expired(call)
+
+    call._session_timer = SessionTimer(
+        interval, we_refresh=we_refresh, refresh=refresh, expire=expire
+    )
+    call._session_timer.start()

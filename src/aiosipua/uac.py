@@ -18,7 +18,7 @@ from .dialog import Dialog, DialogState
 from .outgoing_call import OutgoingCall
 from .sdp import SdpMessage, serialize_sdp
 from .transaction import TransactionLayer
-from .uac_responses import process_response
+from .uac_responses import apply_session_headers, process_response
 from .utils import generate_branch, generate_call_id, generate_tag
 
 if TYPE_CHECKING:
@@ -72,6 +72,7 @@ class SipUAC:
         extra_headers: dict[str, str] | None = None,
         user_agent: str | None = None,
         auth: SipDigestAuth | None = None,
+        session_expires: int | None = None,
     ) -> OutgoingCall:
         """Initiate an outbound call by sending an INVITE.
 
@@ -83,6 +84,8 @@ class SipUAC:
             extra_headers: Optional extra headers (e.g. ``{"X-Room-ID": "room-1"}``).
             user_agent: Optional User-Agent header value.
             auth: Optional digest credentials for automatic 401/407 retry.
+            session_expires: Requested session-timer interval in seconds
+                (RFC 4028); omitted, no timers are negotiated.
 
         Returns:
             An :class:`OutgoingCall` that can be used to await the response.
@@ -125,6 +128,9 @@ class SipUAC:
         )
         if auth is not None:
             call._auth = auth
+        if session_expires is not None:
+            call._session_expires_requested = session_expires
+            apply_session_headers(call, invite)
         self._calls[call_id] = call
 
         logger.info("Sent INVITE %s → %s (Call-ID: %s)", from_uri, to_uri, call_id)
@@ -174,7 +180,9 @@ class SipUAC:
         dialog.terminate()
 
         # Remove from outgoing calls if tracked
-        self._calls.pop(dialog.call_id, None)
+        call = self._calls.pop(dialog.call_id, None)
+        if call is not None:
+            call._cancel_session_timer()
 
         return bye
 
@@ -329,6 +337,7 @@ class SipUAC:
 
         # Remove from outgoing calls if tracked
         self._calls.pop(dialog.call_id, None)
+        call._cancel_session_timer()
 
         return cancel
 

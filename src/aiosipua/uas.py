@@ -23,8 +23,23 @@ from .dialog import (
 from .incoming_call import IncomingCall
 from .message import SipRequest, SipResponse
 from .refer import handle_notify, handle_refer
-from .sdp import SdpMessage, parse_sdp, serialize_sdp
+from .sdp import SdpMessage, parse_sdp
+from .session_timer import (
+    DEFAULT_MIN_SE,
+    SessionTimer,
+    parse_session_expires,
+    peer_allows_update,
+    send_session_refresh,
+)
 from .transaction import TransactionLayer, TransactionState
+from .uas_requests import (
+    handle_ack,
+    handle_bye,
+    handle_cancel,
+    handle_prack,
+    handle_update,
+    session_refreshed,
+)
 from .utils import generate_tag
 
 if TYPE_CHECKING:
@@ -70,6 +85,8 @@ class SipUAS:
         uac: SipUAC | None = None,
         advertised_addr: tuple[str, int] | None = None,
         retransmit_2xx: bool | None = None,
+        session_expires: int | None = None,
+        min_se: int = DEFAULT_MIN_SE,
     ) -> None:
         self.transport = transport
         self.transactions = TransactionLayer()
@@ -82,6 +99,9 @@ class SipUAS:
         if retransmit_2xx is None:
             retransmit_2xx = not getattr(transport, "reliable", True)
         self.retransmit_2xx = retransmit_2xx
+        # Session timers (RFC 4028): enabled when session_expires is set
+        self.session_expires = session_expires
+        self.min_se = min_se
 
         # Callbacks
         self.on_invite: InviteCallback | None = None
@@ -94,6 +114,7 @@ class SipUAS:
         self.on_transfer_progress: TransferProgressCallback | None = None
         self.on_ack_timeout: InviteCallback | None = None
         self.on_prack_timeout: InviteCallback | None = None
+        self.on_session_expired: InviteCallback | None = None
 
         # Active calls keyed by call-id
         self._calls: dict[str, IncomingCall] = {}
@@ -101,12 +122,12 @@ class SipUAS:
         # Method dispatch (anything else gets 405)
         self._handlers: dict[str, Callable[[SipRequest, tuple[str, int]], None]] = {
             "INVITE": self._handle_invite,
-            "ACK": self._handle_ack,
-            "PRACK": self._handle_prack,
-            "BYE": self._handle_bye,
-            "CANCEL": self._handle_cancel,
+            "ACK": partial(handle_ack, self),
+            "PRACK": partial(handle_prack, self),
+            "BYE": partial(handle_bye, self),
+            "CANCEL": partial(handle_cancel, self),
             "OPTIONS": self._handle_options,
-            "UPDATE": self._handle_update,
+            "UPDATE": partial(handle_update, self),
             "REFER": partial(handle_refer, self),
             "NOTIFY": partial(handle_notify, self),
         }
@@ -216,6 +237,7 @@ class SipUAS:
             # Re-parse SDP if present
             if request.body and request.content_type == "application/sdp":
                 existing.sdp_offer = parse_sdp(request.body)
+            session_refreshed(self, call_id, existing)
             if self.on_reinvite is not None:
                 self.on_reinvite(existing)
             return
@@ -242,6 +264,29 @@ class SipUAS:
         else:
             txn.state = TransactionState.PROCEEDING
 
+        # Session timers (RFC 4028): negotiate the interval and refresher role
+        session_interval: int | None = None
+        refresher_us = True
+        if self.session_expires is not None:
+            se_raw = request.get_header("session-expires")
+            interval, refresher = (
+                parse_session_expires(se_raw) if se_raw else (self.session_expires, None)
+            )
+            if 0 < interval < self.min_se:
+                self._send_error(
+                    request,
+                    422,
+                    "Session Interval Too Small",
+                    extra_headers={"Min-SE": str(self.min_se)},
+                )
+                return
+            session_interval = interval if interval > 0 else self.session_expires
+            # Honour the offered refresher; we never refresh through re-INVITE,
+            # so hand the role to the peer when its Allow lacks UPDATE
+            refresher_us = refresher != "uac"
+            if refresher_us and not peer_allows_update(request.headers.get("allow")):
+                refresher_us = False
+
         # Parse SDP offer from body
         sdp_offer = None
         if request.body and request.content_type == "application/sdp":
@@ -256,6 +301,8 @@ class SipUAS:
             user_agent=self.user_agent,
             advertised_addr=self.advertised_addr,
             retransmit_2xx=self.retransmit_2xx,
+            session_interval=session_interval,
+            session_refresher_us=refresher_us,
             on_ack_timeout=self._dispatch_ack_timeout,
             on_prack_timeout=self._dispatch_prack_timeout,
         )
@@ -269,20 +316,26 @@ class SipUAS:
         if self.on_invite is not None:
             self.on_invite(call)
 
-    def _handle_ack(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an incoming ACK (confirms a 2xx, or closes a rejected INVITE)."""
-        call_id = request.call_id or ""
-        call = self._calls.get(call_id)
-        if call is None or not dialog_matches(call.dialog, request):
+    def _start_session_timer(self, call: IncomingCall) -> None:
+        """Arm the RFC 4028 timer for a confirmed call (idempotent)."""
+        if not call.session_interval or call._session_timer is not None:
             return
+        call._session_timer = SessionTimer(
+            call.session_interval,
+            we_refresh=call.session_refresher_us,
+            refresh=partial(send_session_refresh, call),
+            expire=partial(self._dispatch_session_expired, call),
+        )
+        call._session_timer.start()
 
-        call._stop_2xx_retransmission()
-        if call.dialog.state == DialogState.TERMINATED:
-            # ACK to our error response — the INVITE transaction is over
-            self._calls.pop(call_id, None)
-        else:
-            call.dialog.confirm()
+    def _dispatch_session_expired(self, call: IncomingCall) -> None:
+        """No refresh before the deadline — the session is dead (RFC 4028 §10)."""
+        self._calls.pop(call.call_id, None)
         self._remove_invite_transaction(call.invite)
+        call.hangup()
+        logger.warning("Session expired on %s — BYE sent", call.call_id)
+        if self.on_session_expired is not None:
+            self.on_session_expired(call)
 
     def _dispatch_ack_timeout(self, call: IncomingCall) -> None:
         """A 2xx was never ACKed — release the call (RFC 3261 §13.3.1.4)."""
@@ -298,135 +351,6 @@ class SipUAS:
         logger.warning("No PRACK for reliable 18x on %s — call rejected", call.call_id)
         if self.on_prack_timeout is not None:
             self.on_prack_timeout(call)
-
-    def _handle_prack(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle a PRACK acknowledging a reliable provisional (RFC 3262 §3)."""
-        call_id = request.call_id or ""
-        call = self._calls.get(call_id)
-        if call is None:
-            self._send_error(request, 481, "Call/Transaction Does Not Exist")
-            return
-        if not self._validate_in_dialog(call.dialog, request):
-            return
-
-        rack = request.get_header("rack") or ""
-        if not call._ack_reliable(rack):
-            self._send_error(request, 481, "Call/Transaction Does Not Exist")
-            return
-
-        resp = call.dialog.create_response(request, 200, "OK")
-        if self.user_agent:
-            resp.headers.set_single("User-Agent", self.user_agent)
-        self.transport.send_reply(resp)
-
-    def _handle_bye(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an incoming BYE (terminates a call)."""
-        call_id = request.call_id or ""
-        call = self._calls.get(call_id)
-
-        if call is not None:
-            if not self._validate_in_dialog(call.dialog, request):
-                return
-            call._stop_retransmissions()
-            self._remove_invite_transaction(call.invite)
-
-        # Check UAC's calls for outbound dialogs
-        if call is None and self.uac is not None and call_id in self.uac._calls:
-            uac_dialog = self.uac._calls[call_id].dialog
-            if not self._validate_in_dialog(uac_dialog, request):
-                return
-            # Wrap so the on_bye callback has the same interface
-            call = self._wrap_uac_dialog(request, addr)
-            # Remove from UAC tracking
-            self.uac._calls.pop(call_id, None)
-
-        if call is None:
-            # No matching dialog — 481
-            self._send_error(request, 481, "Call/Transaction Does Not Exist")
-            return
-
-        # Send 200 OK for BYE
-        resp = call.dialog.create_response(request, 200, "OK")
-        if self.user_agent:
-            resp.headers.set_single("User-Agent", self.user_agent)
-        self.transport.send_reply(resp)
-
-        # Terminate dialog and remove call
-        call.dialog.terminate()
-        self._calls.pop(call_id, None)
-
-        # Dispatch callback
-        if self.on_bye is not None:
-            self.on_bye(call, request)
-
-    def _handle_cancel(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an incoming CANCEL (cancels a pending INVITE).
-
-        Matched against the INVITE server transaction by Via branch
-        (RFC 3261 §9.2), not by Call-ID.
-        """
-        vias = request.via
-        branch = vias[0].branch if vias else None
-        txn = self.transactions.get_server(branch, "INVITE") if branch else None
-
-        call: IncomingCall | None = None
-        if txn is not None and txn.request is not None:
-            call = self._calls.get(txn.request.call_id or "")
-
-        if call is None:
-            self._send_error(request, 481, "Call/Transaction Does Not Exist")
-            return
-
-        # Send 200 OK for the CANCEL itself
-        resp = call.dialog.create_response(request, 200, "OK")
-        if self.user_agent:
-            resp.headers.set_single("User-Agent", self.user_agent)
-        self.transport.send_reply(resp)
-
-        # Send 487 Request Terminated for the original INVITE
-        call._stop_retransmissions()
-        if not call._answered:
-            call.reject(487, "Request Terminated")
-
-        self._calls.pop(call.call_id, None)
-        if txn is not None:
-            self.transactions.remove(txn)
-
-        if self.on_cancel is not None:
-            self.on_cancel(request, addr)
-
-    def _handle_update(self, request: SipRequest, addr: tuple[str, int]) -> None:
-        """Handle an in-dialog UPDATE (RFC 3311) — session refresh or renegotiation.
-
-        Bodyless UPDATEs (e.g. RFC 4028 refreshes) get an automatic 200.
-        UPDATEs carrying an SDP offer are answered with the SDP returned by
-        ``on_update``, or rejected with 488 when no handler answers.
-        """
-        call_id = request.call_id or ""
-        # UPDATE on an outbound call's dialog: refresh only (no renegotiation)
-        call, dialog = self._find_dialog(call_id)
-
-        if dialog is None:
-            self._send_error(request, 481, "Call/Transaction Does Not Exist")
-            return
-        if not self._validate_in_dialog(dialog, request):
-            return
-
-        has_offer = bool(request.body) and request.content_type == "application/sdp"
-        sdp_answer: SdpMessage | None = None
-        if call is not None and self.on_update is not None:
-            sdp_answer = self.on_update(call, request)
-
-        if has_offer and sdp_answer is None:
-            resp = dialog.create_response(request, 488, "Not Acceptable Here")
-        else:
-            resp = dialog.create_response(request, 200, "OK")
-            if sdp_answer is not None:
-                resp.body = serialize_sdp(sdp_answer)
-                resp.headers.set_single("Content-Type", "application/sdp")
-        if self.user_agent:
-            resp.headers.set_single("User-Agent", self.user_agent)
-        self.transport.send_reply(resp)
 
     def _remove_invite_transaction(self, invite: SipRequest) -> None:
         """Drop the server transaction tracked for *invite*, if any."""
@@ -476,9 +400,19 @@ class SipUAS:
 
         self.transport.send_reply(resp)
 
-    def _send_error(self, request: SipRequest, status_code: int, reason: str) -> None:
+    def _send_error(
+        self,
+        request: SipRequest,
+        status_code: int,
+        reason: str,
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
         """Send an error response for a request with no dialog context."""
         resp = SipResponse(status_code=status_code, reason_phrase=reason)
+        if extra_headers:
+            for name, value in extra_headers.items():
+                resp.headers.set_single(name, value)
 
         for v in request.headers.get("via"):
             resp.headers.append("Via", v)
