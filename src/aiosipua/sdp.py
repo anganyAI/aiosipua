@@ -15,11 +15,6 @@ _WELL_KNOWN_CODECS: dict[int, tuple[str, int, int | None]] = {
     18: ("G729", 8000, 1),
 }
 
-# Reverse lookup: encoding name (upper) -> (payload_type, clock_rate, channels)
-_CODEC_BY_NAME: dict[str, tuple[int, int, int | None]] = {
-    name.upper(): (pt, rate, ch) for pt, (name, rate, ch) in _WELL_KNOWN_CODECS.items()
-}
-
 # --- Dataclasses ---
 
 

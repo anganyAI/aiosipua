@@ -21,8 +21,13 @@ def generate_tag() -> str:
     return os.urandom(8).hex()
 
 
+def bracket_ipv6(host: str) -> str:
+    """Bracket a bare IPv6 literal for URI/Via serialization (RFC 3261 §19.1.1)."""
+    if ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
 def format_addr(host: str, port: int) -> str:
     """``host:port`` for URIs and Via sent-by, bracketing IPv6 literals."""
-    if ":" in host and not host.startswith("["):
-        return f"[{host}]:{port}"
-    return f"{host}:{port}"
+    return f"{bracket_ipv6(host)}:{port}"
