@@ -270,9 +270,7 @@ class TestCallSessionWithMockedAiortp:
     @pytest.mark.asyncio()
     async def test_duplicate_tx_passthrough(self) -> None:
         offer = parse_sdp(BASIC_SDP)
-        session = CallSession(
-            local_ip="10.0.0.5", rtp_port=30000, offer=offer, duplicate_tx=True
-        )
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer, duplicate_tx=True)
 
         mock_aiortp = MagicMock()
         mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
