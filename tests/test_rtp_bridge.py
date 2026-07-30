@@ -281,6 +281,33 @@ class TestCallSessionWithMockedAiortp:
         assert mock_aiortp.RTPSession.create.call_args.kwargs["duplicate_tx"] is True
 
     @pytest.mark.asyncio()
+    async def test_symmetric_rtp_passthrough(self) -> None:
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer, symmetric_rtp=True)
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        assert mock_aiortp.RTPSession.create.call_args.kwargs["symmetric_rtp"] is True
+
+    @pytest.mark.asyncio()
+    async def test_symmetric_rtp_defaults_off(self) -> None:
+        """Omitting the option keeps aiortp's default: the SDP offer decides."""
+        offer = parse_sdp(BASIC_SDP)
+        session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)
+
+        mock_aiortp = MagicMock()
+        mock_aiortp.RTPSession.create = AsyncMock(return_value=MagicMock())
+
+        with patch("aiosipua.rtp_bridge._import_aiortp", return_value=mock_aiortp):
+            await session.start()
+
+        assert mock_aiortp.RTPSession.create.call_args.kwargs["symmetric_rtp"] is False
+
+    @pytest.mark.asyncio()
     async def test_close_closes_rtp_session(self) -> None:
         offer = parse_sdp(BASIC_SDP)
         session = CallSession(local_ip="10.0.0.5", rtp_port=30000, offer=offer)

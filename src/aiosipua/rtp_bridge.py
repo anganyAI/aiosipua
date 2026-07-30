@@ -113,6 +113,13 @@ class CallSession(_BaseCallSession):
 
         # Later...
         await session.close()
+
+    ``symmetric_rtp`` enables RTP latching in aiortp: the outbound destination
+    only follows the source of packets actually received from the peer. Without
+    it the SDP offer alone decides where media goes, for the whole call — a
+    caller can point the stream at a third party and never receive anything
+    itself. Defaults to ``False``, matching aiortp; enable it when the peer's
+    advertised address should not be trusted on its own.
     """
 
     def __init__(
@@ -136,6 +143,7 @@ class CallSession(_BaseCallSession):
         playout: bool = False,
         playout_max_delay_ms: int = 200,
         duplicate_tx: bool = False,
+        symmetric_rtp: bool = False,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_sdp(
@@ -178,6 +186,9 @@ class CallSession(_BaseCallSession):
         self._playout_max_delay_ms = playout_max_delay_ms
         # TX redundancy for degraded links (requires aiortp >= 0.7.0)
         self._duplicate_tx = duplicate_tx
+        # RTP latching: only follow an address we actually receive packets from,
+        # instead of trusting the SDP offer for the whole call.
+        self._symmetric_rtp = symmetric_rtp
 
         # User callbacks
         self.on_audio: Callable[[bytes, int], None] | None = None
@@ -241,6 +252,7 @@ class CallSession(_BaseCallSession):
             playout=self._playout,
             playout_max_delay_ms=self._playout_max_delay_ms,
             duplicate_tx=self._duplicate_tx,
+            symmetric_rtp=self._symmetric_rtp,
         )
 
         # Wire up callbacks

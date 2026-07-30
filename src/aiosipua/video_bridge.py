@@ -43,6 +43,13 @@ class VideoCallSession(_BaseCallSession):
 
         # Later...
         await session.close()
+
+    ``symmetric_rtp`` enables RTP latching in aiortp: the outbound destination
+    only follows the source of packets actually received from the peer. Without
+    it the SDP offer alone decides where media goes, for the whole call — a
+    caller can point the stream at a third party and never receive anything
+    itself. Defaults to ``False``, matching aiortp; enable it when the peer's
+    advertised address should not be trusted on its own.
     """
 
     def __init__(
@@ -56,6 +63,7 @@ class VideoCallSession(_BaseCallSession):
         session_id: str | None = None,
         session_name: str = "-",
         jitter_capacity: int = 128,
+        symmetric_rtp: bool = False,
     ) -> None:
         sdp_ip = advertised_ip or local_ip
         sdp_answer, chosen_pt = negotiate_video_sdp(
@@ -82,6 +90,9 @@ class VideoCallSession(_BaseCallSession):
 
         self._clock_rate: int = 90000
         self._jitter_capacity = jitter_capacity
+        # RTP latching: only follow an address we actually receive packets from,
+        # instead of trusting the SDP offer for the whole call.
+        self._symmetric_rtp = symmetric_rtp
 
         self.on_frame: Callable[[bytes, int, bool], None] | None = None
         """Called with (nal_data, timestamp, is_keyframe)."""
@@ -124,6 +135,7 @@ class VideoCallSession(_BaseCallSession):
             clock_rate=clock_rate,
             jitter_capacity=self._jitter_capacity,
             codec=codec_name,
+            symmetric_rtp=self._symmetric_rtp,
         )
 
         # Wire callbacks
