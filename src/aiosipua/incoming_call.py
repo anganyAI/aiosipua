@@ -79,17 +79,36 @@ class IncomingCall:
 
     @property
     def room_id(self) -> str | None:
-        """Room ID from X-Room-ID header, if present."""
+        """Room ID from the X-Room-ID header, if present.
+
+        Returned verbatim, with no validation: this is a header on the
+        INVITE, so whoever sent the INVITE wrote it. It is trustworthy only
+        to the extent that a PBX or SBC in front of this listener sets it
+        and strips whatever the far end sent. If the SIP port is reachable
+        directly, the caller is choosing this value — do not use it to
+        select a tenant, a room or anything else with an authorization
+        consequence without validating it first.
+        """
         return self.invite.get_header("x-room-id")
 
     @property
     def session_id(self) -> str | None:
-        """Session ID from X-Session-ID header, if present."""
+        """Session ID from the X-Session-ID header, if present.
+
+        Caller-controlled, exactly as :attr:`room_id` is, and with a sharper
+        edge: an application that keys its own per-call state on this value
+        will let a second INVITE name a session that is already live. Treat a
+        collision with an active session as hostile unless the header comes
+        from a PBX you control.
+        """
         return self.invite.get_header("x-session-id")
 
     @property
     def x_headers(self) -> dict[str, str]:
-        """All X-* headers from the INVITE as a dict."""
+        """All X-* headers from the INVITE as a dict.
+
+        Caller-supplied, like every other header here — see :attr:`room_id`.
+        """
         result: dict[str, str] = {}
         for name, values in self.invite.headers.items():
             if name.lower().startswith("x-") and values:
