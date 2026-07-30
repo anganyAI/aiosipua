@@ -186,8 +186,9 @@ class CallSession(_BaseCallSession):
         self._playout_max_delay_ms = playout_max_delay_ms
         # TX redundancy for degraded links (requires aiortp >= 0.7.0)
         self._duplicate_tx = duplicate_tx
-        # RTP latching: only follow an address we actually receive packets from,
-        # instead of trusting the SDP offer for the whole call.
+        # Symmetric RTP latching (RFC 4961, requires aiortp >= 0.5.0): only
+        # follow an address we actually receive packets from, instead of
+        # trusting the SDP offer for the whole call.
         self._symmetric_rtp = symmetric_rtp
 
         # User callbacks

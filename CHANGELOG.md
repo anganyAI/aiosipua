@@ -15,12 +15,12 @@ This file was added during `0.7.1` and backfilled from the git tags and the
 ### Added
 - **`symmetric_rtp` passthrough**: both `CallSession` and `VideoCallSession`
   grow `symmetric_rtp`, riding through to `aiortp.RTPSession.create` and
-  `aiortp.VideoRTPSession.create`. aiortp has implemented the latching logic
-  since 0.7.0, but neither bridge forwarded the flag, so it was unreachable
-  from any application built on aiosipua. Without it, the `c=` address of the
-  SDP offer alone decides where outbound media goes for the whole duration of
-  the call — a caller can point the stream at a third party and never receive
-  anything itself. With it enabled, the outbound destination only follows an
+  `aiortp.VideoRTPSession.create`. aiortp has exposed the latching logic since
+  0.5.0, but neither bridge forwarded the flag across three minor releases, so
+  it was unreachable from any application built on aiosipua. Without it, the
+  `c=` address of the SDP offer alone decides where outbound media goes for the
+  whole duration of the call — a caller can point the stream at a third party
+  and never receive anything itself. With it enabled, the outbound destination only follows an
   address that packets were actually received from. The default is unchanged
   (`False`, matching aiortp): this is a pure passthrough, and flipping the
   default here would alter media behaviour for every existing call.

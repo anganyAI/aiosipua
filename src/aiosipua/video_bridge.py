@@ -90,8 +90,9 @@ class VideoCallSession(_BaseCallSession):
 
         self._clock_rate: int = 90000
         self._jitter_capacity = jitter_capacity
-        # RTP latching: only follow an address we actually receive packets from,
-        # instead of trusting the SDP offer for the whole call.
+        # Symmetric RTP latching (RFC 4961, requires aiortp >= 0.5.0): only
+        # follow an address we actually receive packets from, instead of
+        # trusting the SDP offer for the whole call.
         self._symmetric_rtp = symmetric_rtp
 
         self.on_frame: Callable[[bytes, int, bool], None] | None = None
